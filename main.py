@@ -42,6 +42,7 @@ PROTO_FILE = APP_DIR / "stream_list.proto"
 PB2_FILE = APP_DIR / "stream_list_pb2.py"
 PB2_GRPC_FILE = APP_DIR / "stream_list_pb2_grpc.py"
 UI_FILE = APP_DIR / "live_voice_bridge.ui"
+ICON_FILE = APP_DIR / "icon.png"
 
 
 def ensure_grpc_files() -> None:
@@ -666,7 +667,19 @@ class LiveVoiceBridgeApp(QObject):
 
 
 def main() -> None:
+    # Windowsのタスクバーでカスタムアイコンを正しく表示させるための設定
+    if platform.system() == "Windows":
+        import ctypes
+        myappid = "Ikumyon.LiveVoiceBridge.App.1.0"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
     app = QApplication(sys.argv)
+
+    # アプリのアイコンを設定
+    if ICON_FILE.exists():
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(str(ICON_FILE)))
+
     controller = LiveVoiceBridgeApp()
     controller.show()
     sys.exit(app.exec())
