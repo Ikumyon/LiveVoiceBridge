@@ -1,0 +1,30 @@
+# Python Cache and Virtual Environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+
+# Generated gRPC / Protocol Buffers files
+stream_list_pb2.py
+stream_list_pb2_grpc.py
+
+# Local Logs
+*.log
+app_run.log
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.suo
+
+# OS files
+.DS_Store
+Thumbs.db
