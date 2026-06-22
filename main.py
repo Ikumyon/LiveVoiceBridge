@@ -55,7 +55,6 @@ class SettingsDialog(QDialog):
         ui_file.close()
 
         # ウィジェットのバインド
-        self.url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "urlLineEdit")
         self.api_key_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "apiKeyLineEdit")
         self.voicevox_url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "voicevoxUrlLineEdit")
         self.speaker_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "speakerIdSpinBox")
@@ -84,9 +83,6 @@ class SettingsDialog(QDialog):
         self.read_author_check.setChecked(self.settings.value("read_author", False, type=bool))
         self.read_super_chat_check.setChecked(self.settings.value("read_super_chat", True, type=bool))
 
-        # URLはメイン画面に入力欄がないため、ダイアログ側で保持
-        self.url_line.setText(self.settings.value("youtube_url", ""))
-
     def save_settings(self) -> None:
         self.settings.setValue("api_key", self.api_key_line.text().strip())
         self.settings.setValue("voicevox_url", self.voicevox_url_line.text().strip())
@@ -97,7 +93,6 @@ class SettingsDialog(QDialog):
         self.settings.setValue("skip_history", self.skip_history_check.isChecked())
         self.settings.setValue("read_author", self.read_author_check.isChecked())
         self.settings.setValue("read_super_chat", self.read_super_chat_check.isChecked())
-        self.settings.setValue("youtube_url", self.url_line.text().strip())
 
     def connect_signals(self) -> None:
         self.voicevox_path_browse_button.clicked.connect(self.browse_voicevox_path)
@@ -177,6 +172,7 @@ class LiveVoiceBridgeApp(QObject):
         self.voicevox_process: subprocess.Popen | None = None
 
         # ウィジェットのバインド
+        self.url_line: QLineEdit = self.window.findChild(QLineEdit, "urlLineEdit")
         self.start_button: QPushButton = self.window.findChild(QPushButton, "startButton")
         self.stop_button: QPushButton = self.window.findChild(QPushButton, "stopButton")
         self.clear_log_button: QPushButton = self.window.findChild(QPushButton, "clearLogButton")
@@ -187,8 +183,12 @@ class LiveVoiceBridgeApp(QObject):
         # メニューバーのアクション取得
         self.action_settings: QAction = self.window.findChild(QAction, "action_settings")
 
+        self.load_settings()
         self.connect_signals()
         self.window.destroyed.connect(self.stop_all)
+
+    def load_settings(self) -> None:
+        self.url_line.setText(self.settings.value("youtube_url", ""))
 
     def connect_signals(self) -> None:
         self.start_button.clicked.connect(self.start)
@@ -213,6 +213,7 @@ class LiveVoiceBridgeApp(QObject):
     def set_running_ui(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
+        self.url_line.setEnabled(not running)
 
     def show_error(self, text: str) -> None:
         self.append_log(f"[エラー] {text}")
@@ -230,7 +231,6 @@ class LiveVoiceBridgeApp(QObject):
             "skip_history": self.settings.value("skip_history", True, type=bool),
             "read_author": self.settings.value("read_author", False, type=bool),
             "read_super_chat": self.settings.value("read_super_chat", True, type=bool),
-            "youtube_url": self.settings.value("youtube_url", ""),
         }
 
         dialog = SettingsDialog(self)
@@ -324,17 +324,20 @@ class LiveVoiceBridgeApp(QObject):
         return False
 
     def start(self) -> None:
-        url_or_id = self.settings.value("youtube_url", "")
+        url_or_id = self.url_line.text().strip()
         api_key = self.settings.value("api_key", "")
         voicevox_url = self.settings.value("voicevox_url", "http://127.0.0.1:50021")
         voicevox_path = self.settings.value("voicevox_path", "")
 
         if not url_or_id:
-            QMessageBox.warning(self.window, "設定不足", "YouTube URL/動画IDが設定されていません。メニューの ツール->設定 から入力してください。")
+            QMessageBox.warning(self.window, "入力不足", "YouTube URLまたはVideo IDを入力してください。")
             return
         if not api_key:
             QMessageBox.warning(self.window, "設定不足", "YouTube Data API Keyが設定されていません。メニューの ツール->設定 から入力してください。")
             return
+
+        # 起動前にURLを保存
+        self.settings.setValue("youtube_url", url_or_id)
 
         # VOICEVOXの自動起動
         self.ensure_voicevox_running_with_path(voicevox_url, voicevox_path)

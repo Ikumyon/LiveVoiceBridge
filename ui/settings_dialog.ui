@@ -21,27 +21,13 @@
      </property>
      <layout class="QGridLayout" name="youtubeGridLayout">
       <item row="0" column="0">
-       <widget class="QLabel" name="urlLabel">
-        <property name="text">
-         <string>URL / Video ID</string>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1" colspan="3">
-       <widget class="QLineEdit" name="urlLineEdit">
-        <property name="placeholderText">
-         <string>https://www.youtube.com/live/xxxxxxxxxxx または動画ID</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="0">
        <widget class="QLabel" name="apiKeyLabel">
         <property name="text">
          <string>API Key</string>
         </property>
        </widget>
       </item>
-      <item row="1" column="1" colspan="3">
+      <item row="0" column="1" colspan="3">
        <widget class="QLineEdit" name="apiKeyLineEdit">
         <property name="echoMode">
          <enum>QLineEdit::EchoMode::Password</enum>

@@ -16,6 +16,24 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="rootLayout">
     <item>
+     <layout class="QHBoxLayout" name="urlLayout">
+      <item>
+       <widget class="QLabel" name="urlLabel">
+        <property name="text">
+         <string>URL / Video ID</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLineEdit" name="urlLineEdit">
+        <property name="placeholderText">
+         <string>https://www.youtube.com/live/xxxxxxxxxxx または動画ID</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
      <layout class="QHBoxLayout" name="buttonLayout">
       <item>
        <widget class="QPushButton" name="startButton">
