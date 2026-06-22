@@ -8,8 +8,9 @@ venv/
 .pytest_cache/
 
 # Generated gRPC / Protocol Buffers files
-stream_list_pb2.py
-stream_list_pb2_grpc.py
+core/stream_list_pb2.py
+core/stream_list_pb2_grpc.py
+
 
 # Local Logs
 *.log

@@ -14,9 +14,42 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import requests
+import emoji
 from PySide6.QtCore import QThread, Signal
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+
+def replace_words(text: str, word_list: list[dict]) -> str:
+    if not word_list:
+        return text
+    # 文字数の長い順にソートして部分一致の誤置換を防ぐ
+    sorted_words = sorted(word_list, key=lambda x: len(x.get("word", "")), reverse=True)
+    for item in sorted_words:
+        word = item.get("word", "")
+        reading = item.get("reading", "")
+        if word and word in text:
+            text = text.replace(word, reading)
+    return text
+
+def replace_emojis(text: str) -> str:
+    emojis = emoji.emoji_list(text)
+    if not emojis:
+        return text
+
+    sorted_emojis = sorted(emojis, key=lambda x: x["match_start"], reverse=True)
+    chars = list(text)
+
+    for item in sorted_emojis:
+        em = item["emoji"]
+        start = item["match_start"]
+        end = item["match_end"]
+
+        demo = emoji.demojize(em, language='ja')
+        replacement = demo.strip(":")
+
+        chars[start:end] = list(replacement)
+
+    return "".join(chars)
 GRPC_TARGET = "dns:///youtube.googleapis.com:443"
 
 TEXT_MESSAGE_EVENT = 1
@@ -24,14 +57,58 @@ SUPER_CHAT_EVENT = 15
 SUPER_STICKER_EVENT = 16
 MEMBER_MILESTONE_CHAT_EVENT = 17
 
-APP_DIR = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys._MEIPASS)
+else:
+    APP_DIR = Path(__file__).resolve().parent.parent
+CORE_DIR = APP_DIR / "core"
 PROTO_FILE = APP_DIR / "stream_list.proto"
-PB2_FILE = APP_DIR / "stream_list_pb2.py"
-PB2_GRPC_FILE = APP_DIR / "stream_list_pb2_grpc.py"
+PB2_FILE = CORE_DIR / "stream_list_pb2.py"
+PB2_GRPC_FILE = CORE_DIR / "stream_list_pb2_grpc.py"
 UI_DIR = APP_DIR / "ui"
 MAIN_UI_FILE = UI_DIR / "main_window.ui"
 SETTINGS_UI_FILE = UI_DIR / "settings_dialog.ui"
-ICON_FILE = APP_DIR / "icon.png"
+ICON_FILE = APP_DIR / "assets" / "icon.png"
+SETTINGS_ICON_FILE = APP_DIR / "assets" / "settings.svg"
+PIP_ICON_FILE = APP_DIR / "assets" / "picture-in-picture-2.svg"
+
+if getattr(sys, "frozen", False):
+    EXE_DIR = Path(sys.executable).parent
+else:
+    EXE_DIR = Path(__file__).resolve().parent.parent
+
+DICT_DIR = EXE_DIR / "dict"
+CONFIG_FILE = EXE_DIR / "config.json"
+
+DEFAULT_CONFIG = {
+    "youtube_api_key": "",
+    "youtube_url": "",
+    "voicevox_url": "http://127.0.0.1:50021",
+    "speaker_id": 1,
+    "speed": 1.0,
+    "skip_history": True,
+    "read_author": False,
+    "read_super_chat": True,
+    "max_length": 50,
+    "dict_group": "デフォルト",
+    "use_ime": False
+}
+
+DEFAULT_WORD_LIST = [
+    {"word": "✨", "reading": "きらきら", "pos": "名詞", "comment": "初期絵文字サンプル"},
+    {"word": "😭", "reading": "うるうる", "pos": "名詞", "comment": "初期絵文字サンプル"},
+    {"word": "😂", "reading": "うれしなき", "pos": "名詞", "comment": "初期絵文字サンプル"},
+    {"word": "👍", "reading": "ぐっど", "pos": "名詞", "comment": "初期絵文字サンプル"},
+    {"word": "🔥", "reading": "めらめら", "pos": "名詞", "comment": "初期絵文字サンプル"},
+    {"word": "👏", "reading": "ぱちぱち", "pos": "名詞", "comment": "初期絵文字サンプル"},
+    {"word": "w", "reading": "わら", "pos": "名詞", "comment": "初期単語サンプル"}
+]
+
+
+# stream_list_pb2/grpc は sys.path に CORE_DIR が含まれている必要がある
+if str(CORE_DIR) not in sys.path:
+    sys.path.append(str(CORE_DIR))
+
 
 
 def ensure_grpc_files() -> None:
@@ -50,8 +127,8 @@ def ensure_grpc_files() -> None:
         [
             "grpc_tools.protoc",
             f"-I{APP_DIR}",
-            f"--python_out={APP_DIR}",
-            f"--grpc_python_out={APP_DIR}",
+            f"--python_out={CORE_DIR}",
+            f"--grpc_python_out={CORE_DIR}",
             str(PROTO_FILE),
         ]
     )
@@ -127,12 +204,13 @@ class SpeechWorker(QThread):
     log = Signal(str)
     error = Signal(str)
 
-    def __init__(self, speech_queue: queue.Queue, voicevox_url: str, speaker_id: int, speed: float):
+    def __init__(self, speech_queue: queue.Queue, voicevox_url: str, speaker_id: int, speed: float, word_list: list[dict] = None):
         super().__init__()
         self.speech_queue = speech_queue
         self.voicevox_url = voicevox_url.rstrip("/")
         self.speaker_id = speaker_id
         self.speed = speed
+        self.word_list = word_list if word_list is not None else []
         self._running = True
 
     def stop(self) -> None:
@@ -150,6 +228,8 @@ class SpeechWorker(QThread):
                 self.error.emit(f"音声合成/再生エラー: {exc}")
 
     def speak(self, text: str) -> None:
+        text = replace_words(text, self.word_list)
+        text = replace_emojis(text)
         query_response = requests.post(
             f"{self.voicevox_url}/audio_query",
             params={"text": text, "speaker": self.speaker_id},
@@ -186,6 +266,8 @@ class ChatStreamWorker(QThread):
     log = Signal(str)
     status = Signal(str)
     error = Signal(str)
+    comment_received = Signal(dict)
+
 
     def __init__(
         self,
@@ -271,9 +353,6 @@ class ChatStreamWorker(QThread):
         seen_ids: set[str] = set()
         reconnect_wait = 1
 
-        # stream_list_pb2/grpc は sys.path に APP_DIR が含まれている必要がある
-        if str(APP_DIR) not in sys.path:
-            sys.path.append(str(APP_DIR))
 
         while self._running:
             try:
@@ -319,20 +398,27 @@ class ChatStreamWorker(QThread):
                             continue
 
                         author = item.author_details.display_name or "匿名"
+                        profile_image_url = item.author_details.profile_image_url or ""
                         message = clean_comment(item.snippet.display_message, self.max_length)
                         if not message:
                             continue
 
-                        if first_response and self.skip_history:
-                            self.log.emit(f"[履歴スキップ] {author}: {message}")
-                            continue
+                        is_skip = first_response and self.skip_history
 
-                        self.log.emit(f"{author}: {message}")
-                        if self.read_author:
-                            read_text = f"{author}さん。{message}"
-                        else:
-                            read_text = message
-                        self.speech_queue.put(read_text)
+                        self.comment_received.emit({
+                            "author": author,
+                            "message": message,
+                            "profile_image_url": profile_image_url,
+                            "is_skip": is_skip
+                        })
+
+                        if not is_skip:
+                            self.log.emit(f"{author}: {message}")
+                            if self.read_author:
+                                read_text = f"{author}さん。{message}"
+                            else:
+                                read_text = message
+                            self.speech_queue.put(read_text)
 
                     first_response = False
 

@@ -8,149 +8,48 @@ import sys
 import time
 
 import requests
-from PySide6.QtCore import QFile, QObject, QSettings, Signal
+import json
+from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
-    QFileDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QTextEdit,
+    QToolButton,
+    QListWidget,
+    QListWidgetItem,
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap, QBrush, QColor, QFont, QPalette
+from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+
+
 
 # core.workers から必要なものをインポート
 from core.workers import (
     MAIN_UI_FILE,
     SETTINGS_UI_FILE,
     ICON_FILE,
+    SETTINGS_ICON_FILE,
+    PIP_ICON_FILE,
     SpeechWorker,
     ChatStreamWorker,
     now_text,
+    CONFIG_FILE,
+    DEFAULT_CONFIG,
+    DICT_DIR,
+    DEFAULT_WORD_LIST,
 )
+from core.settings_dialog import SettingsDialog
+from core.comment_window import CommentWindow
 
-
-class SettingsDialog(QDialog):
-    # 設定が変更されたことをメインウィンドウへ通知するシグナル
-    settings_changed = Signal()
-
-    def __init__(self, parent_app: LiveVoiceBridgeApp):
-        super().__init__()
-        self.main_app = parent_app
-        self.settings = QSettings("LiveVoiceBridge", "LiveVoiceBridge")
-
-        # UIファイルの読み込み
-        loader = QUiLoader()
-        ui_file = QFile(str(SETTINGS_UI_FILE))
-        if not ui_file.open(QFile.ReadOnly):
-            raise RuntimeError(f"UIファイルを開けません: {SETTINGS_UI_FILE}")
-        self.dialog_window = loader.load(ui_file, self)
-        ui_file.close()
-
-        # ウィジェットのバインド
-        self.api_key_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "apiKeyLineEdit")
-        self.voicevox_url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "voicevoxUrlLineEdit")
-        self.speaker_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "speakerIdSpinBox")
-        self.max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "maxLengthSpinBox")
-        self.speed_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "speedDoubleSpinBox")
-        self.skip_history_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "skipHistoryCheckBox")
-        self.read_author_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readAuthorCheckBox")
-        self.read_super_chat_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readSuperChatCheckBox")
-        self.voicevox_path_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "voicevoxPathLineEdit")
-        self.voicevox_path_browse_button: QPushButton = self.dialog_window.findChild(QPushButton, "voicevoxPathBrowseButton")
-        self.test_voicevox_button: QPushButton = self.dialog_window.findChild(QPushButton, "testVoicevoxButton")
-        self.button_box: QDialogButtonBox = self.dialog_window.findChild(QDialogButtonBox, "buttonBox")
-
-        self.load_settings()
-        self.connect_signals()
-
-    def load_settings(self) -> None:
-        env_key = os.environ.get("YOUTUBE_API_KEY", "")
-        self.api_key_line.setText(self.settings.value("api_key", env_key))
-        self.voicevox_url_line.setText(self.settings.value("voicevox_url", "http://127.0.0.1:50021"))
-        self.voicevox_path_line.setText(self.settings.value("voicevox_path", ""))
-        self.speaker_spin.setValue(int(self.settings.value("speaker_id", 3)))
-        self.max_length_spin.setValue(int(self.settings.value("max_length", 80)))
-        self.speed_spin.setValue(float(self.settings.value("speed", 1.2)))
-        self.skip_history_check.setChecked(self.settings.value("skip_history", True, type=bool))
-        self.read_author_check.setChecked(self.settings.value("read_author", False, type=bool))
-        self.read_super_chat_check.setChecked(self.settings.value("read_super_chat", True, type=bool))
-
-    def save_settings(self) -> None:
-        self.settings.setValue("api_key", self.api_key_line.text().strip())
-        self.settings.setValue("voicevox_url", self.voicevox_url_line.text().strip())
-        self.settings.setValue("voicevox_path", self.voicevox_path_line.text().strip())
-        self.settings.setValue("speaker_id", self.speaker_spin.value())
-        self.settings.setValue("max_length", self.max_length_spin.value())
-        self.settings.setValue("speed", self.speed_spin.value())
-        self.settings.setValue("skip_history", self.skip_history_check.isChecked())
-        self.settings.setValue("read_author", self.read_author_check.isChecked())
-        self.settings.setValue("read_super_chat", self.read_super_chat_check.isChecked())
-
-    def connect_signals(self) -> None:
-        self.voicevox_path_browse_button.clicked.connect(self.browse_voicevox_path)
-        self.test_voicevox_button.clicked.connect(self.test_voicevox)
-
-        # OK / キャンセルボタン
-        self.button_box.accepted.connect(self.accept_settings)
-        self.button_box.rejected.connect(self.reject)
-
-        # リアルタイム反映用の変更検知
-        self.skip_history_check.stateChanged.connect(self.settings_changed.emit)
-        self.read_author_check.stateChanged.connect(self.settings_changed.emit)
-        self.read_super_chat_check.stateChanged.connect(self.settings_changed.emit)
-        self.speaker_spin.valueChanged.connect(self.settings_changed.emit)
-        self.speed_spin.valueChanged.connect(self.settings_changed.emit)
-        self.max_length_spin.valueChanged.connect(self.settings_changed.emit)
-
-    def accept_settings(self) -> None:
-        self.save_settings()
-        self.accept()
-
-    def browse_voicevox_path(self) -> None:
-        system = platform.system()
-        filter_str = "Executable Files (*.exe);;All Files (*)" if system == "Windows" else "All Files (*)"
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "VOICEVOX 実行ファイルを選択",
-            self.voicevox_path_line.text().strip(),
-            filter_str
-        )
-        if file_path:
-            self.voicevox_path_line.setText(file_path)
-
-    def test_voicevox(self) -> None:
-        url = self.voicevox_url_line.text().strip().rstrip("/")
-        if not url:
-            QMessageBox.warning(self, "入力不足", "VOICEVOX URLを入力してください。")
-            return
-
-        # VOICEVOX起動確認
-        self.main_app.ensure_voicevox_running_with_path(
-            url, self.voicevox_path_line.text().strip()
-        )
-
-        try:
-            response = requests.get(f"{url}/speakers", timeout=5)
-            response.raise_for_status()
-            speakers = response.json()
-            lines: list[str] = []
-            for speaker in speakers[:8]:
-                name = speaker.get("name", "?")
-                styles = speaker.get("styles", [])
-                style_text = ", ".join(f"{s.get('name')}={s.get('id')}" for s in styles[:6])
-                lines.append(f"{name}: {style_text}")
-            self.main_app.append_log("VOICEVOX接続OK")
-            self.main_app.append_log(" / ".join(lines) if lines else "speaker情報なし")
-        except Exception as exc:
-            self.main_app.show_error(f"VOICEVOXに接続できません: {exc}")
 
 
 class LiveVoiceBridgeApp(QObject):
@@ -165,43 +64,382 @@ class LiveVoiceBridgeApp(QObject):
         if self.window is None:
             raise RuntimeError("UIファイルの読み込みに失敗しました。")
 
-        self.settings = QSettings("LiveVoiceBridge", "LiveVoiceBridge")
+        self.config: dict = {}
+        self.load_config()
         self.speech_queue: queue.Queue = queue.Queue()
         self.chat_worker: ChatStreamWorker | None = None
         self.speech_worker: SpeechWorker | None = None
         self.voicevox_process: subprocess.Popen | None = None
+        self.comment_window: CommentWindow | None = None
+        self._comment_tab_layout = None
+        self._comment_placeholder: QLabel | None = None
 
         # ウィジェットのバインド
         self.url_line: QLineEdit = self.window.findChild(QLineEdit, "urlLineEdit")
         self.start_button: QPushButton = self.window.findChild(QPushButton, "startButton")
         self.stop_button: QPushButton = self.window.findChild(QPushButton, "stopButton")
         self.clear_log_button: QPushButton = self.window.findChild(QPushButton, "clearLogButton")
-        self.comment_text: QTextEdit = self.window.findChild(QTextEdit, "commentTextEdit")
+        self.test_button: QPushButton = self.window.findChild(QPushButton, "testButton")
+        self.comment_list: QListWidget = self.window.findChild(QListWidget, "commentListWidget")
+        self.comment_list.setStyleSheet("""
+            QListWidget {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 6px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(128, 128, 128, 100);
+                min-height: 20px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(128, 128, 128, 180);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: transparent;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+        """)
+        self.comment_list.verticalScrollBar().rangeChanged.connect(self.auto_scroll_to_bottom)
+        
         self.log_text: QTextEdit = self.window.findChild(QTextEdit, "logTextEdit")
+        
+        # 非同期画像ロード用のマネージャ
+        self.network_manager = QNetworkAccessManager(self)
+        self.network_manager.finished.connect(self.on_image_downloaded)
         self.status_label: QLabel = self.window.findChild(QLabel, "statusLabel")
 
-        # メニューバーのアクション取得
-        self.action_settings: QAction = self.window.findChild(QAction, "action_settings")
+        # PiPボタン・設定ツールボタンの取得
+        self.popout_button: QToolButton = self.window.findChild(QToolButton, "popoutButton")
+        self.settings_button: QToolButton = self.window.findChild(QToolButton, "settingsButton")
+
+        from PySide6.QtGui import QIcon, QPainter, QPalette, QPixmap
+        from PySide6.QtCore import QSize, QByteArray, Qt
+
+        def _load_svg_icon(svg_path, ref_widget) -> QIcon | None:
+            """SVG をテーマカラーに合わせて読み込む。失敗時は None を返す。"""
+            try:
+                with open(svg_path, "r", encoding="utf-8") as f:
+                    svg_content = f.read()
+                text_color = ref_widget.palette().color(QPalette.Text).name()
+                modified_svg = svg_content.replace("currentColor", text_color)
+                renderer = QSvgRenderer(QByteArray(modified_svg.encode("utf-8")))
+                pixmap = QPixmap(24, 24)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                renderer.render(painter)
+                painter.end()
+                return QIcon(pixmap)
+            except Exception:
+                return QIcon(str(svg_path))
+
+        if SETTINGS_ICON_FILE.exists():
+            self.settings_button.setIcon(_load_svg_icon(SETTINGS_ICON_FILE, self.settings_button))
+            self.settings_button.setIconSize(QSize(24, 24))
+
+        if PIP_ICON_FILE.exists() and self.popout_button is not None:
+            self.popout_button.setIcon(_load_svg_icon(PIP_ICON_FILE, self.popout_button))
+            self.popout_button.setText("")
+            self.popout_button.setIconSize(QSize(24, 24))
+
+        # 起動時に辞書ファイルとディレクトリを自動生成
+        try:
+            DICT_DIR.mkdir(parents=True, exist_ok=True)
+            json_files = list(DICT_DIR.glob("*.json"))
+            if not json_files:
+                default_file = DICT_DIR / "デフォルト.json"
+                with open(default_file, "w", encoding="utf-8") as f:
+                    json.dump(DEFAULT_WORD_LIST, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            print(f"辞書の初期化失敗: {exc}")
 
         self.load_settings()
         self.connect_signals()
         self.window.destroyed.connect(self.stop_all)
 
+        # PiP状態を復元
+        if self.config.get("comment_popout", False):
+            self.set_comment_popout(True)
+
+    def load_config(self) -> None:
+        try:
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    self.config = DEFAULT_CONFIG.copy()
+                    self.config.update(loaded)
+            else:
+                self.config = DEFAULT_CONFIG.copy()
+                self.save_config()
+        except Exception as exc:
+            print(f"設定ファイルのロード失敗: {exc}")
+            self.config = DEFAULT_CONFIG.copy()
+
+    def save_config(self) -> None:
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            print(f"設定ファイルのセーブ失敗: {exc}")
+
     def load_settings(self) -> None:
-        self.url_line.setText(self.settings.value("youtube_url", ""))
+        self.url_line.setText(self.config.get("youtube_url", ""))
 
     def connect_signals(self) -> None:
         self.start_button.clicked.connect(self.start)
         self.stop_button.clicked.connect(self.stop_all)
         self.clear_log_button.clicked.connect(self.clear_all_logs)
-        self.action_settings.triggered.connect(self.open_settings_dialog)
+        self.test_button.clicked.connect(self.test_display)
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+        if self.popout_button is not None:
+            self.popout_button.toggled.connect(self.set_comment_popout)
 
-    def append_comment(self, text: str) -> None:
-        self.comment_text.append(f"{now_text()}  {text}")
+    def create_placeholder_avatar(self, initial: str) -> QPixmap:
+        pixmap = QPixmap(36, 36)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        palette = self.comment_list.palette()
+        bg_color = palette.color(QPalette.Link)
+        
+        painter.setBrush(QBrush(bg_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(0, 0, 36, 36)
+        
+        painter.setPen(QColor(Qt.white))
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(14)
+        painter.setFont(font)
+        
+        painter.drawText(0, 0, 36, 36, Qt.AlignCenter, initial)
+        painter.end()
+        return pixmap
+
+    def clip_to_circle(self, pixmap: QPixmap, size: int) -> QPixmap:
+        target = QPixmap(size, size)
+        target.fill(Qt.transparent)
+        
+        painter = QPainter(target)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        scaled_pixmap = pixmap.scaled(
+            size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+        )
+        
+        x_offset = (scaled_pixmap.width() - size) // 2
+        y_offset = (scaled_pixmap.height() - size) // 2
+        cropped_pixmap = scaled_pixmap.copy(x_offset, y_offset, size, size)
+        
+        brush = QBrush(cropped_pixmap)
+        painter.setBrush(brush)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(0, 0, size, size)
+        painter.end()
+        
+        return target
+
+    def on_image_downloaded(self, reply: QNetworkReply) -> None:
+        avatar_label = reply.property("avatar_label")
+        if not avatar_label:
+            reply.deleteLater()
+            return
+            
+        if reply.error() == QNetworkReply.NoError:
+            data = reply.readAll()
+            pixmap = QPixmap()
+            if pixmap.loadFromData(data):
+                clipped_pixmap = self.clip_to_circle(pixmap, 36)
+                avatar_label.setPixmap(clipped_pixmap)
+        reply.deleteLater()
+
+    def add_comment_item(self, data: dict) -> None:
+        author = data.get("author", "")
+        message = data.get("message", "")
+        profile_image_url = data.get("profile_image_url", "")
+        is_skip = data.get("is_skip", False)
+
+        item = QListWidgetItem(self.comment_list)
+        widget = QWidget()
+        
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(10)
+        
+        avatar_label = QLabel()
+        avatar_label.setFixedSize(36, 36)
+        initial = author[0] if author else "Anonymous"[0]
+        placeholder_pixmap = self.create_placeholder_avatar(initial)
+        avatar_label.setPixmap(placeholder_pixmap)
+        layout.addWidget(avatar_label)
+        
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        
+        meta_layout = QHBoxLayout()
+        meta_layout.setSpacing(8)
+        meta_layout.setContentsMargins(0, 0, 0, 0)
+        
+        palette = self.comment_list.palette()
+        time_color = palette.color(QPalette.PlaceholderText).name()
+        
+        time_label = QLabel(f"[{now_text()}]")
+        time_label.setStyleSheet(f"color: {time_color}; font-size: 11px;")
+        meta_layout.addWidget(time_label)
+        
+        if is_skip:
+            name_color = "#e74c3c"
+            name_text = f"[履歴スキップ] {author}"
+        else:
+            name_color = palette.color(QPalette.Link).name()
+            name_text = author
+
+        name_label = QLabel(name_text)
+        name_label.setStyleSheet(f"color: {name_color}; font-weight: bold; font-size: 12px;")
+        meta_layout.addWidget(name_label)
+        meta_layout.addStretch()
+        
+        text_layout.addLayout(meta_layout)
+        
+        msg_color = palette.color(QPalette.Text).name() if not is_skip else palette.color(QPalette.PlaceholderText).name()
+        msg_label = QLabel(message)
+        msg_label.setWordWrap(True)
+        msg_label.setStyleSheet(f"color: {msg_color}; font-size: 12px;")
+        text_layout.addWidget(msg_label)
+        
+        layout.addLayout(text_layout)
+        widget.setLayout(layout)
+        
+        item.setSizeHint(widget.sizeHint())
+        self.comment_list.addItem(item)
+        self.comment_list.setItemWidget(item, widget)
+        
+        if profile_image_url:
+            request = QNetworkRequest(QUrl(profile_image_url))
+            reply = self.network_manager.get(request)
+            reply.setProperty("avatar_label", avatar_label)
+
+    def auto_scroll_to_bottom(self, min_val: int, max_val: int) -> None:
+        bar = self.comment_list.verticalScrollBar()
+        current_val = bar.value()
+        page_step = bar.pageStep()
+        if max_val - current_val < page_step + 100:
+            bar.setValue(max_val)
+
+    def test_display(self) -> None:
+        self.add_comment_item({
+            "author": "システム通知",
+            "message": "表示テストを開始します✨（システム通知）",
+            "profile_image_url": "",
+            "is_skip": False
+        })
+        self.add_comment_item({
+            "author": "四国めたん",
+            "message": "過去ログ読み飛ばしのスキップテストです。😭",
+            "profile_image_url": "https://picsum.photos/100?random=1",
+            "is_skip": True
+        })
+        self.add_comment_item({
+            "author": "ずんだもん",
+            "message": "これはパレット色を用いたリッチテキスト表示のテストなのだ！😂👏",
+            "profile_image_url": "https://picsum.photos/100?random=2",
+            "is_skip": False
+        })
 
     def clear_all_logs(self) -> None:
         self.log_text.clear()
-        self.comment_text.clear()
+        self.comment_list.clear()
+
+    # ------------------------------------------------------------------ PiP --
+    def set_comment_popout(self, enabled: bool) -> None:
+        """コメント表示のPiP切り替え。"""
+        # ボタンのチェック状態を同期（シグナルの二重発火を防ぐ）
+        if self.popout_button is not None:
+            self.popout_button.blockSignals(True)
+            self.popout_button.setChecked(enabled)
+            self.popout_button.blockSignals(False)
+
+        if enabled:
+            self._enable_popout()
+        else:
+            self._disable_popout()
+
+        self.config["comment_popout"] = enabled
+        self.save_config()
+
+    def _enable_popout(self) -> None:
+        """コメントをPiPウィンドウに移動する。"""
+        from PySide6.QtWidgets import QVBoxLayout
+
+        # コメントタブのレイアウトを取得して保持
+        comment_tab = self.window.findChild(QWidget, "commentTab")
+        if comment_tab is None:
+            return
+        self._comment_tab_layout = comment_tab.layout()
+
+        # QListWidget をタブから取り外す
+        if self._comment_tab_layout is not None:
+            self._comment_tab_layout.removeWidget(self.comment_list)
+            self.comment_list.setParent(None)
+
+        # プレースホルダーを表示
+        self._comment_placeholder = QLabel("📺  別ウィンドウで表示中")
+        self._comment_placeholder.setAlignment(Qt.AlignCenter)
+        if self._comment_tab_layout is not None:
+            self._comment_tab_layout.addWidget(self._comment_placeholder)
+
+        # PiPウィンドウを生成して QListWidget を渡す
+        if self.comment_window is None:
+            self.comment_window = CommentWindow(self)
+        self.comment_window.attach_list_widget(self.comment_list)
+
+        # 保存済みの位置・サイズがあれば復元
+        x = self.config.get("comment_win_x")
+        y = self.config.get("comment_win_y")
+        w = self.config.get("comment_win_w", 360)
+        h = self.config.get("comment_win_h", 500)
+        self.comment_window.resize(w, h)
+        if x is not None and y is not None:
+            self.comment_window.move(x, y)
+        self.comment_window.show()
+
+    def _disable_popout(self) -> None:
+        """コメントをPiPウィンドウからタブに戻す。"""
+        if self.comment_window is not None:
+            # ウィンドウの位置・サイズを保存
+            geo = self.comment_window.geometry()
+            self.config["comment_win_x"] = geo.x()
+            self.config["comment_win_y"] = geo.y()
+            self.config["comment_win_w"] = geo.width()
+            self.config["comment_win_h"] = geo.height()
+
+            # QListWidget をウィンドウから取り外す
+            self.comment_window.detach_list_widget(self.comment_list)
+            self.comment_window.hide()
+
+        # プレースホルダーを削除して QListWidget をタブに戻す
+        if self._comment_placeholder is not None:
+            if self._comment_tab_layout is not None:
+                self._comment_tab_layout.removeWidget(self._comment_placeholder)
+            self._comment_placeholder.deleteLater()
+            self._comment_placeholder = None
+
+        if self._comment_tab_layout is not None:
+            self._comment_tab_layout.addWidget(self.comment_list)
+            self._comment_tab_layout = None
 
     def append_log(self, text: str) -> None:
         self.log_text.append(f"{now_text()}  {text}")
@@ -219,31 +457,59 @@ class LiveVoiceBridgeApp(QObject):
         self.append_log(f"[エラー] {text}")
         QMessageBox.warning(self.window, "LiveVoiceBridge エラー", text)
 
+    def load_all_word_dict_data(self) -> dict[str, list[dict]]:
+        data = {}
+        try:
+            if DICT_DIR.exists():
+                for json_file in DICT_DIR.glob("*.json"):
+                    group_name = json_file.stem
+                    try:
+                        with open(json_file, "r", encoding="utf-8") as f:
+                            data[group_name] = json.load(f)
+                    except Exception as e:
+                        print(f"辞書ファイル {json_file.name} のロード失敗: {e}")
+        except Exception as e:
+            print(f"辞書ディレクトリ走査失敗: {e}")
+        
+        if not data:
+            data["デフォルト"] = DEFAULT_WORD_LIST.copy()
+        return data
+
+    def load_raw_word_dict_data(self) -> dict:
+        return self.load_all_word_dict_data()
+
     def open_settings_dialog(self) -> None:
         # ロールバック用に現在の設定をバックアップ
-        backup_settings = {
-            "api_key": self.settings.value("api_key", ""),
-            "voicevox_url": self.settings.value("voicevox_url", "http://127.0.0.1:50021"),
-            "voicevox_path": self.settings.value("voicevox_path", ""),
-            "speaker_id": int(self.settings.value("speaker_id", 3)),
-            "max_length": int(self.settings.value("max_length", 80)),
-            "speed": float(self.settings.value("speed", 1.2)),
-            "skip_history": self.settings.value("skip_history", True, type=bool),
-            "read_author": self.settings.value("read_author", False, type=bool),
-            "read_super_chat": self.settings.value("read_super_chat", True, type=bool),
-        }
+        backup_config = self.config.copy()
+        backup_word_dict_data = self.load_raw_word_dict_data()
 
         dialog = SettingsDialog(self)
         # リアルタイム反映の接続
         dialog.settings_changed.connect(lambda: self.update_live_settings_from_dialog(dialog))
 
-        result = dialog.exec()
+        result = dialog.dialog_window.exec()
         if result == QDialog.Rejected:
             # キャンセルされた場合は設定値をロールバック
-            for key, val in backup_settings.items():
-                self.settings.setValue(key, val)
+            self.config = backup_config
+            self.save_config()
+            
+            # 辞書データのロールバック（ファイルの書き戻し）
+            try:
+                if DICT_DIR.exists():
+                    for json_file in DICT_DIR.glob("*.json"):
+                        try:
+                            json_file.unlink()
+                        except Exception:
+                            pass
+                for group_name, words in backup_word_dict_data.items():
+                    dest_file = DICT_DIR / f"{group_name}.json"
+                    with open(dest_file, "w", encoding="utf-8") as f:
+                        json.dump(words, f, ensure_ascii=False, indent=2)
+            except Exception as exc:
+                print(f"辞書ファイルのロールバック失敗: {exc}")
+
             self.append_log("設定変更がキャンセルされました。元の設定に戻します。")
-            self.restore_settings_to_threads(backup_settings)
+            self.restore_settings_to_threads(backup_config, backup_word_dict_data)
 
     def update_live_settings_from_dialog(self, dialog: SettingsDialog) -> None:
         # ダイアログで操作された最新値をスレッドへ即時反映
@@ -254,20 +520,26 @@ class LiveVoiceBridgeApp(QObject):
             self.chat_worker.max_length = dialog.max_length_spin.value()
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.speaker_id = dialog.speaker_spin.value()
+            self.speech_worker.speaker_id = dialog.get_current_speaker_id()
             self.speech_worker.speed = dialog.speed_spin.value()
+            self.speech_worker.word_list = dialog.get_all_merged_word_list()
 
-    def restore_settings_to_threads(self, backup: dict) -> None:
+    def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
         # スレッドのパラメータをバックアップした元の値に復元
         if self.chat_worker is not None and self.chat_worker.isRunning():
-            self.chat_worker.skip_history = backup["skip_history"]
-            self.chat_worker.read_author = backup["read_author"]
-            self.chat_worker.read_super_chat = backup["read_super_chat"]
-            self.chat_worker.max_length = backup["max_length"]
+            self.chat_worker.skip_history = backup_config.get("skip_history", True)
+            self.chat_worker.read_author = backup_config.get("read_author", False)
+            self.chat_worker.read_super_chat = backup_config.get("read_super_chat", True)
+            self.chat_worker.max_length = backup_config.get("max_length", 50)
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.speaker_id = backup["speaker_id"]
-            self.speech_worker.speed = backup["speed"]
+            self.speech_worker.speaker_id = int(backup_config.get("speaker_id", 1))
+            self.speech_worker.speed = float(backup_config.get("speed", 1.0))
+            # 全グループの単語をマージして適用
+            merged_list = []
+            for words in backup_word_dict_data.values():
+                merged_list.extend(words)
+            self.speech_worker.word_list = merged_list
 
     def ensure_voicevox_running_with_path(self, url: str, path: str) -> bool:
         if not url:
@@ -325,9 +597,9 @@ class LiveVoiceBridgeApp(QObject):
 
     def start(self) -> None:
         url_or_id = self.url_line.text().strip()
-        api_key = self.settings.value("api_key", "")
-        voicevox_url = self.settings.value("voicevox_url", "http://127.0.0.1:50021")
-        voicevox_path = self.settings.value("voicevox_path", "")
+        api_key = self.config.get("youtube_api_key", "")
+        voicevox_url = self.config.get("voicevox_url", "http://127.0.0.1:50021")
+        voicevox_path = self.config.get("voicevox_path", "")
 
         if not url_or_id:
             QMessageBox.warning(self.window, "入力不足", "YouTube URLまたはVideo IDを入力してください。")
@@ -337,17 +609,28 @@ class LiveVoiceBridgeApp(QObject):
             return
 
         # 起動前にURLを保存
-        self.settings.setValue("youtube_url", url_or_id)
+        self.config["youtube_url"] = url_or_id
+        self.save_config()
 
         # VOICEVOXの自動起動
         self.ensure_voicevox_running_with_path(voicevox_url, voicevox_path)
+
+        # すべての辞書ファイルの読み込み・統合
+        word_list = []
+        try:
+            all_dict = self.load_all_word_dict_data()
+            for words in all_dict.values():
+                word_list.extend(words)
+        except Exception as exc:
+            self.append_log(f"[警告] 辞書ファイルの読み込みに失敗しました: {exc}")
 
         self.speech_queue = queue.Queue()
         self.speech_worker = SpeechWorker(
             speech_queue=self.speech_queue,
             voicevox_url=voicevox_url,
-            speaker_id=int(self.settings.value("speaker_id", 3)),
-            speed=float(self.settings.value("speed", 1.2)),
+            speaker_id=int(self.config.get("speaker_id", 1)),
+            speed=float(self.config.get("speed", 1.0)),
+            word_list=word_list,
         )
         self.speech_worker.error.connect(self.show_error)
         self.speech_worker.start()
@@ -356,12 +639,12 @@ class LiveVoiceBridgeApp(QObject):
             speech_queue=self.speech_queue,
             youtube_url_or_id=url_or_id,
             api_key=api_key,
-            skip_history=self.settings.value("skip_history", True, type=bool),
-            read_author=self.settings.value("read_author", False, type=bool),
-            read_super_chat=self.settings.value("read_super_chat", True, type=bool),
-            max_length=int(self.settings.value("max_length", 80)),
+            skip_history=bool(self.config.get("skip_history", True)),
+            read_author=bool(self.config.get("read_author", False)),
+            read_super_chat=bool(self.config.get("read_super_chat", True)),
+            max_length=int(self.config.get("max_length", 50)),
         )
-        self.chat_worker.log.connect(self.append_comment)
+        self.chat_worker.comment_received.connect(self.add_comment_item)
         self.chat_worker.status.connect(self.set_status)
         self.chat_worker.error.connect(self.show_error)
         self.chat_worker.finished.connect(self.on_chat_finished)
@@ -406,6 +689,9 @@ class LiveVoiceBridgeApp(QObject):
 
     def show(self) -> None:
         self.window.show()
+        # PiPウィンドウが存在すれば一緒に表示
+        if self.comment_window is not None and self.config.get("comment_popout", False):
+            self.comment_window.show()
 
 
 def main() -> None:
