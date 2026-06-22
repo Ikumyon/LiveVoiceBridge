@@ -12,6 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 import emoji
@@ -50,6 +51,367 @@ def replace_emojis(text: str) -> str:
         chars[start:end] = list(replacement)
 
     return "".join(chars)
+
+def parse_education_command(text: str, start_pos: int) -> tuple[str, str, int] | tuple[None, None, None]:
+    """
+    Parses '教育(単語=読み)' starting at start_pos.
+    Supports backslash escape sequences like \\) and \\\\ and \\=.
+    Returns (word, reading, end_pos) or (None, None, None).
+    """
+    open_paren = text.find('(', start_pos + 2)
+    if open_paren == -1:
+        return None, None, None
+    
+    result_chars = []
+    i = open_paren + 1
+    escaped = False
+    equal_idx = -1
+    
+    while i < len(text):
+        char = text[i]
+        if escaped:
+            result_chars.append(char)
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif char == '=' and equal_idx == -1:
+            equal_idx = len(result_chars)
+        elif char == ')':
+            if equal_idx != -1:
+                word = "".join(result_chars[:equal_idx]).strip()
+                reading = "".join(result_chars[equal_idx:]).strip()
+                return word, reading, i + 1
+            return None, None, None
+        else:
+            result_chars.append(char)
+        i += 1
+        
+    return None, None, None
+
+def parse_forget_command(text: str, start_pos: int) -> tuple[str, int] | tuple[None, None]:
+    """
+    Parses '忘却(単語)' starting at start_pos.
+    Supports backslash escape sequences like \\) and \\\\.
+    Returns (word, end_pos) or (None, None).
+    """
+    open_paren = text.find('(', start_pos + 2)
+    if open_paren == -1:
+        return None, None
+        
+    result_chars = []
+    i = open_paren + 1
+    escaped = False
+    
+    while i < len(text):
+        char = text[i]
+        if escaped:
+            result_chars.append(char)
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif char == ')':
+            word = "".join(result_chars).strip()
+            return word, i + 1
+        else:
+            result_chars.append(char)
+        i += 1
+        
+    return None, None
+
+def parse_comment_into_segments(message: str) -> tuple[list[dict], list[str]]:
+    """
+    Parses a comment into multiple segments with their own voice parameters.
+    Returns (segments, play_files).
+    """
+    segments = []
+    current_states = {
+        "speed": None,
+        "pitch": None,
+        "volume": None,
+        "speaker_id": None,
+        "echo": None,
+        "yamabiko": None,
+        "panning": None
+    }
+    
+    i = 0
+    text_accum = []
+    play_files = []
+    
+    while i < len(message):
+        # 1. 教育
+        if message.startswith("教育", i):
+            word, reading, end_pos = parse_education_command(message, i)
+            if word is not None and reading is not None:
+                if text_accum:
+                    clean_txt = "".join(text_accum).strip()
+                    if clean_txt:
+                        segments.append({"text": clean_txt, **current_states})
+                    text_accum = []
+                read_text = f"{word}が{reading}に辞書登録されました。"
+                segments.append({
+                    "text": read_text,
+                    "action": "add_dict",
+                    "word": word,
+                    "reading": reading,
+                    **current_states
+                })
+                i = end_pos
+                continue
+                
+        # 2. 忘却
+        if message.startswith("忘却", i):
+            word, end_pos = parse_forget_command(message, i)
+            if word is not None:
+                if text_accum:
+                    clean_txt = "".join(text_accum).strip()
+                    if clean_txt:
+                        segments.append({"text": clean_txt, **current_states})
+                    text_accum = []
+                read_text = f"{word}が辞書から削除されました。"
+                segments.append({
+                    "text": read_text,
+                    "action": "del_dict",
+                    "word": word,
+                    **current_states
+                })
+                i = end_pos
+                continue
+                
+        # 3. 再生/音/sound
+        play_match = re.match(r'^(?:再生|音|sound)\(', message[i:])
+        if play_match:
+            open_paren = i + play_match.end() - 1
+            result_chars = []
+            k = open_paren + 1
+            escaped = False
+            found_end = False
+            while k < len(message):
+                char = message[k]
+                if escaped:
+                    result_chars.append(char)
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif char == ')':
+                    found_end = True
+                    end_pos = k + 1
+                    break
+                else:
+                    result_chars.append(char)
+                k += 1
+            if found_end:
+                play_files.append("".join(result_chars).strip())
+                i = end_pos
+                continue
+
+        # 4. 速度
+        speed_match = re.match(r'^速度\((\d+)\)', message[i:])
+        if speed_match:
+            val = float(speed_match.group(1))
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            current_states["speed"] = val / 100.0
+            i += speed_match.end()
+            continue
+
+        # 5. 音程
+        pitch_match = re.match(r'^音程\((\d+)\)', message[i:])
+        if pitch_match:
+            val = float(pitch_match.group(1))
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            current_states["pitch"] = (val - 100.0) / 100.0 * 0.15
+            i += pitch_match.end()
+            continue
+
+        # 6. 音量
+        volume_match = re.match(r'^音量\((\d+)\)', message[i:])
+        if volume_match:
+            val = float(volume_match.group(1))
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            current_states["volume"] = val / 100.0
+            i += volume_match.end()
+            continue
+
+        # 7. 声
+        speaker_match = re.match(r'^声\((\d+)\)', message[i:])
+        if speaker_match:
+            val = int(speaker_match.group(1))
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            current_states["speaker_id"] = val
+            i += speaker_match.end()
+            continue
+
+        # 8. エコー
+        echo_match = re.match(r'^エコー\((\d+)\)', message[i:])
+        if echo_match:
+            val = int(echo_match.group(1))
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            current_states["echo"] = val
+            i += echo_match.end()
+            continue
+
+        # 9. やまびこ
+        yamabiko_match = re.match(r'^やまびこ\((\d+)\)', message[i:])
+        if yamabiko_match:
+            val = int(yamabiko_match.group(1))
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            current_states["yamabiko"] = val
+            i += yamabiko_match.end()
+            continue
+
+        # 10. 定位 (左/右/両)
+        pan_match = re.match(r'^(左|右|両)(?:\)|）)', message[i:])
+        if pan_match:
+            direction = pan_match.group(1)
+            if text_accum:
+                clean_txt = "".join(text_accum).strip()
+                if clean_txt:
+                    segments.append({"text": clean_txt, **current_states})
+                text_accum = []
+            if direction == '左':
+                current_states["panning"] = "left"
+            elif direction == '右':
+                current_states["panning"] = "right"
+            elif direction == '両':
+                current_states["panning"] = "both"
+            i += pan_match.end()
+            continue
+
+        # Accumulate char
+        text_accum.append(message[i])
+        i += 1
+        
+    if text_accum:
+        clean_txt = "".join(text_accum).strip()
+        if clean_txt:
+            segments.append({"text": clean_txt, **current_states})
+            
+    return segments, play_files
+
+def apply_audio_effects(wav_path: str, echo_level: int = None, yamabiko_level: int = None, panning: str = None) -> str:
+    """
+    Applies echo and/or yamabiko effects, and panning (stereo localization) to a WAV file (16-bit PCM).
+    Returns the path to the new WAV file.
+    """
+    if not echo_level and not yamabiko_level and not panning:
+        return wav_path
+
+    import wave
+    import struct
+
+    try:
+        with wave.open(wav_path, 'rb') as w_in:
+            params = w_in.getparams()
+            nchannels, sampwidth, framerate, nframes, comptype, compname = params
+            
+            if sampwidth != 2:
+                return wav_path
+                
+            raw_data = w_in.readframes(nframes)
+            
+        samples = list(struct.unpack(f"<{nframes * nchannels}h", raw_data))
+        
+        # 1. Apply echo/yamabiko if requested
+        if echo_level or yamabiko_level:
+            # Determine delay
+            delay_seconds = 0.15 if echo_level else 0.35
+            delay_frames = int(framerate * delay_seconds)
+            delay_samples = delay_frames * nchannels
+            
+            if yamabiko_level:
+                decay = min(max(yamabiko_level / 100.0, 0.1), 0.8)
+                repetitions = 3
+            else:
+                decay = min(max(echo_level / 100.0, 0.1), 0.8)
+                repetitions = 1
+                
+            extra_samples = delay_samples * repetitions
+            out_samples = [0] * (len(samples) + extra_samples)
+            
+            for i in range(len(samples)):
+                out_samples[i] += samples[i]
+                for r in range(1, repetitions + 1):
+                    delay_idx = i + r * delay_samples
+                    if delay_idx < len(out_samples):
+                        echo_val = int(samples[i] * (decay ** r))
+                        out_samples[delay_idx] += echo_val
+            samples = out_samples
+
+        # Clip values to 16-bit signed range
+        clipped_samples = []
+        for s in samples:
+            if s > 32767:
+                clipped_samples.append(32767)
+            elif s < -32768:
+                clipped_samples.append(-32768)
+            else:
+                clipped_samples.append(int(s))
+                
+        # 2. Apply panning (left/right/both)
+        if panning in ("left", "right"):
+            panned_samples = []
+            if nchannels == 1:
+                # Convert mono to stereo
+                nchannels = 2
+                for s in clipped_samples:
+                    if panning == "left":
+                        panned_samples.extend([s, 0])
+                    else:
+                        panned_samples.extend([0, s])
+            elif nchannels == 2:
+                # Stereo: mask channels
+                for i in range(0, len(clipped_samples), 2):
+                    left_val = clipped_samples[i]
+                    right_val = clipped_samples[i+1]
+                    if panning == "left":
+                        panned_samples.extend([left_val, 0])
+                    else:
+                        panned_samples.extend([0, right_val])
+            clipped_samples = panned_samples
+
+        out_data = struct.pack(f"<{len(clipped_samples)}h", *clipped_samples)
+        
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp_out:
+            new_wav_path = fp_out.name
+            
+        with wave.open(new_wav_path, 'wb') as w_out:
+            w_out.setparams((nchannels, sampwidth, framerate, len(clipped_samples) // nchannels, comptype, compname))
+            w_out.writeframes(out_data)
+            
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+            
+        return new_wav_path
+    except Exception as e:
+        print(f"Effect processing error: {e}")
+        return wav_path
+
 GRPC_TARGET = "dns:///youtube.googleapis.com:443"
 
 TEXT_MESSAGE_EVENT = 1
@@ -62,7 +424,7 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = Path(__file__).resolve().parent.parent
 CORE_DIR = APP_DIR / "core"
-PROTO_FILE = APP_DIR / "stream_list.proto"
+PROTO_FILE = CORE_DIR / "stream_list.proto"
 PB2_FILE = CORE_DIR / "stream_list_pb2.py"
 PB2_GRPC_FILE = CORE_DIR / "stream_list_pb2_grpc.py"
 UI_DIR = APP_DIR / "ui"
@@ -160,7 +522,7 @@ def clean_comment(text: str, max_len: int) -> str:
     text = html.unescape(text)
     text = re.sub(r"https?://\S+", "URL", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > max_len:
+    if max_len != -1 and len(text) > max_len:
         text = text[:max_len] + "、以下略"
     return text
 
@@ -203,6 +565,8 @@ def play_wav(path: str) -> None:
 class SpeechWorker(QThread):
     log = Signal(str)
     error = Signal(str)
+    dict_add_requested = Signal(str, str)
+    dict_del_requested = Signal(str)
 
     def __init__(self, speech_queue: queue.Queue, voicevox_url: str, speaker_id: int, speed: float, word_list: list[dict] = None):
         super().__init__()
@@ -212,10 +576,12 @@ class SpeechWorker(QThread):
         self.speed = speed
         self.word_list = word_list if word_list is not None else []
         self._running = True
+        self.executor = ThreadPoolExecutor(max_workers=8)
 
     def stop(self) -> None:
         self._running = False
         self.speech_queue.put(None)
+        self.executor.shutdown(wait=False)
 
     def run(self) -> None:
         while self._running:
@@ -223,43 +589,126 @@ class SpeechWorker(QThread):
             if item is None:
                 break
             try:
-                self.speak(str(item))
+                if isinstance(item, list):
+                    self.speak_segments(item)
+                elif isinstance(item, dict):
+                    self.speak_item(item)
+                else:
+                    self.speak(str(item))
             except Exception as exc:
                 self.error.emit(f"音声合成/再生エラー: {exc}")
 
-    def speak(self, text: str) -> None:
-        text = replace_words(text, self.word_list)
-        text = replace_emojis(text)
-        query_response = requests.post(
-            f"{self.voicevox_url}/audio_query",
-            params={"text": text, "speaker": self.speaker_id},
-            timeout=10,
-        )
-        query_response.raise_for_status()
-        audio_query = query_response.json()
-        audio_query["speedScale"] = self.speed
-        audio_query["intonationScale"] = 1.05
-        audio_query["volumeScale"] = 1.0
-
-        synthesis_response = requests.post(
-            f"{self.voicevox_url}/synthesis",
-            params={"speaker": self.speaker_id},
-            json=audio_query,
-            timeout=30,
-        )
-        synthesis_response.raise_for_status()
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
-            fp.write(synthesis_response.content)
-            wav_path = fp.name
-
-        try:
-            play_wav(wav_path)
-        finally:
+    def speak_segments(self, segments: list[dict]) -> None:
+        # 1. すべてのセグメントの音声合成処理を並列で実行
+        futures = []
+        for seg in segments:
+            text = seg.get("text", "")
+            if not text:
+                futures.append(None)
+                continue
+                
+            future = self.executor.submit(
+                self.synthesize_wav,
+                text,
+                speed=seg.get("speed"),
+                pitch=seg.get("pitch"),
+                volume=seg.get("volume"),
+                speaker_id=seg.get("speaker_id"),
+                echo=seg.get("echo"),
+                yamabiko=seg.get("yamabiko"),
+                panning=seg.get("panning")
+            )
+            futures.append(future)
+            
+        # 2. 合成が完了したものから順番に再生
+        for idx, seg in enumerate(segments):
+            future = futures[idx]
+            if future is None:
+                continue
+                
             try:
-                os.remove(wav_path)
-            except OSError:
-                pass
+                # このセグメントの合成完了を待つ (ブロック)
+                wav_path = future.result()
+                if wav_path:
+                    play_wav(wav_path)
+                    try:
+                        os.remove(wav_path)
+                    except OSError:
+                        pass
+            except Exception as exc:
+                self.error.emit(f"音声再生エラー: {exc}")
+                
+            # 再生完了後に辞書操作アクションを実行
+            action = seg.get("action")
+            if action == "add_dict":
+                word = seg.get("word")
+                reading = seg.get("reading")
+                if word and reading:
+                    self.dict_add_requested.emit(word, reading)
+            elif action == "del_dict":
+                word = seg.get("word")
+                if word:
+                    self.dict_del_requested.emit(word)
+
+    def speak_item(self, item: dict) -> None:
+        self.speak_segments([item])
+
+    def synthesize_wav(self, text: str, speed: float = None, pitch: float = None, volume: float = None, speaker_id: int = None, echo: int = None, yamabiko: int = None, panning: str = None) -> str | None:
+        try:
+            text = replace_words(text, self.word_list)
+            text = replace_emojis(text)
+            
+            target_speaker = speaker_id if speaker_id is not None else self.speaker_id
+            target_speed = speed if speed is not None else self.speed
+
+            query_response = requests.post(
+                f"{self.voicevox_url}/audio_query",
+                params={"text": text, "speaker": target_speaker},
+                timeout=10,
+            )
+            query_response.raise_for_status()
+            audio_query = query_response.json()
+            audio_query["speedScale"] = target_speed
+            
+            if pitch is not None:
+                audio_query["pitchScale"] = pitch
+                
+            audio_query["intonationScale"] = 1.05
+            
+            target_volume = volume if volume is not None else 1.0
+            audio_query["volumeScale"] = target_volume
+
+            synthesis_response = requests.post(
+                f"{self.voicevox_url}/synthesis",
+                params={"speaker": target_speaker},
+                json=audio_query,
+                timeout=30,
+            )
+            synthesis_response.raise_for_status()
+
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+                fp.write(synthesis_response.content)
+                wav_path = fp.name
+
+            # エフェクトおよび定位制御の適用
+            wav_path = apply_audio_effects(wav_path, echo_level=echo, yamabiko_level=yamabiko, panning=panning)
+            return wav_path
+        except Exception as e:
+            self.error.emit(f"並列音声合成失敗: {e}")
+            return None
+
+    def speak(self, text: str, speed: float = None, pitch: float = None, volume: float = None, speaker_id: int = None, echo: int = None, yamabiko: int = None, panning: str = None) -> None:
+        # テスト用/レガシーフォールバック用の単発同期再生
+        wav_path = self.synthesize_wav(text, speed=speed, pitch=pitch, volume=volume, speaker_id=speaker_id, echo=echo, yamabiko=yamabiko, panning=panning)
+        if wav_path:
+            try:
+                play_wav(wav_path)
+            finally:
+                try:
+                    os.remove(wav_path)
+                except OSError:
+                    pass
+
 
 
 class ChatStreamWorker(QThread):
@@ -396,7 +845,6 @@ class ChatStreamWorker(QThread):
                         message_type = int(item.snippet.type)
                         if not self.should_read_type(message_type):
                             continue
-
                         author = item.author_details.display_name or "匿名"
                         profile_image_url = item.author_details.profile_image_url or ""
                         message = clean_comment(item.snippet.display_message, self.max_length)
@@ -405,21 +853,43 @@ class ChatStreamWorker(QThread):
 
                         is_skip = first_response and self.skip_history
 
+                        segments, play_files = parse_comment_into_segments(message)
+                        clean_msg = "".join([s["text"] for s in segments])
+
                         self.comment_received.emit({
                             "author": author,
                             "message": message,
                             "profile_image_url": profile_image_url,
-                            "is_skip": is_skip
+                            "is_skip": is_skip,
+                            "play_file": play_files[0] if play_files else None,
+                            "clean_message": clean_msg
                         })
 
                         if not is_skip:
-                            self.log.emit(f"{author}: {message}")
-                            if self.read_author:
-                                read_text = f"{author}さん。{message}"
-                            else:
-                                read_text = message
-                            self.speech_queue.put(read_text)
-
+                            self.log.emit(f"{author}: {clean_msg}")
+                            
+                            for idx, seg in enumerate(segments):
+                                text_to_speak = seg["text"]
+                                if not text_to_speak:
+                                    continue
+                                if idx == 0 and self.read_author:
+                                    text_to_speak = f"{author}さん。{text_to_speak}"
+                                    
+                                queue_item = {
+                                    "text": text_to_speak,
+                                    "speed": seg["speed"],
+                                    "pitch": seg["pitch"],
+                                    "volume": seg["volume"],
+                                    "speaker_id": seg["speaker_id"],
+                                    "echo": seg["echo"],
+                                    "yamabiko": seg["yamabiko"],
+                                    "panning": seg["panning"]
+                                }
+                                if seg.get("action"):
+                                    queue_item["action"] = seg["action"]
+                                    queue_item["word"] = seg.get("word")
+                                    queue_item["reading"] = seg.get("reading")
+                                self.speech_queue.put(queue_item)
                     first_response = False
 
                 # StreamList can end normally. Reconnect using the latest token.

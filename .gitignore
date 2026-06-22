@@ -30,3 +30,6 @@ app_run.log
 .DS_Store
 Thumbs.db
 config.json
+sounds/
+build/
+dist/

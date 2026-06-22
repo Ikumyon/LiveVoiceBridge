@@ -6,6 +6,13 @@ import queue
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+try:
+    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+    HAS_MULTIMEDIA = True
+except ImportError:
+    HAS_MULTIMEDIA = False
 
 import requests
 import json
@@ -74,12 +81,23 @@ class LiveVoiceBridgeApp(QObject):
         self._comment_tab_layout = None
         self._comment_placeholder: QLabel | None = None
 
+        # soundsディレクトリの自動生成
+        self.sounds_dir = Path("sounds")
+        self.sounds_dir.mkdir(exist_ok=True)
+
+        # QMediaPlayerの初期化
+        self.player = None
+        self.audio_output = None
+        if HAS_MULTIMEDIA:
+            self.player = QMediaPlayer(self)
+            self.audio_output = QAudioOutput(self)
+            self.player.setAudioOutput(self.audio_output)
+
         # ウィジェットのバインド
         self.url_line: QLineEdit = self.window.findChild(QLineEdit, "urlLineEdit")
         self.start_button: QPushButton = self.window.findChild(QPushButton, "startButton")
         self.stop_button: QPushButton = self.window.findChild(QPushButton, "stopButton")
         self.clear_log_button: QPushButton = self.window.findChild(QPushButton, "clearLogButton")
-        self.test_button: QPushButton = self.window.findChild(QPushButton, "testButton")
         self.comment_list: QListWidget = self.window.findChild(QListWidget, "commentListWidget")
         self.comment_list.setStyleSheet("""
             QListWidget {
@@ -198,7 +216,6 @@ class LiveVoiceBridgeApp(QObject):
         self.start_button.clicked.connect(self.start)
         self.stop_button.clicked.connect(self.stop_all)
         self.clear_log_button.clicked.connect(self.clear_all_logs)
-        self.test_button.clicked.connect(self.test_display)
         self.settings_button.clicked.connect(self.open_settings_dialog)
         if self.popout_button is not None:
             self.popout_button.toggled.connect(self.set_comment_popout)
@@ -332,32 +349,111 @@ class LiveVoiceBridgeApp(QObject):
             reply = self.network_manager.get(request)
             reply.setProperty("avatar_label", avatar_label)
 
+        # SE再生コマンドの処理
+        play_file = data.get("play_file")
+        if play_file and not is_skip:
+            self.play_sound_file(play_file)
+
+    def play_sound_file(self, filename: str) -> None:
+        if not self.player:
+            self.append_log(f"[音声再生エラー] QMediaPlayerが初期化されていません。")
+            return
+        
+        safe_name = os.path.basename(filename)
+        sound_path = self.sounds_dir / safe_name
+        if sound_path.exists():
+            self.player.setSource(QUrl.fromLocalFile(str(sound_path.absolute())))
+            self.player.play()
+            self.append_log(f"[音声再生] {safe_name} を再生します。")
+        else:
+            self.append_log(f"[音声再生警告] {safe_name} が sounds ディレクトリに見つかりません。")
+
+    def on_dict_add_requested(self, word: str, reading: str) -> None:
+        try:
+            DICT_DIR.mkdir(parents=True, exist_ok=True)
+            dict_file = DICT_DIR / "配信コメント.json"
+            
+            if dict_file.exists():
+                with open(dict_file, "r", encoding="utf-8") as f:
+                    words = json.load(f)
+            else:
+                words = []
+                
+            # 重複防止：既に同じ単語があれば削除
+            words = [w for w in words if w.get("word") != word]
+            words.append({
+                "word": word,
+                "reading": reading,
+                "pos": "名詞",
+                "comment": "コメント追加"
+            })
+            
+            with open(dict_file, "w", encoding="utf-8") as f:
+                json.dump(words, f, ensure_ascii=False, indent=2)
+                
+            self.append_log(f"[辞書登録完了] 「{word}」を「{reading}」として登録しました（配信コメントグループ）。")
+            
+            # メイン設定画面のメモリ上にある辞書辞書も更新
+            if hasattr(self, "word_dict") and isinstance(self.word_dict, dict):
+                self.word_dict["配信コメント"] = words
+
+            # 全辞書データのロードと統合
+            all_dict = self.load_all_word_dict_data()
+            merged_list = []
+            for group_words in all_dict.values():
+                merged_list.extend(group_words)
+                
+            if self.speech_worker is not None and self.speech_worker.isRunning():
+                self.speech_worker.word_list = merged_list
+                
+        except Exception as exc:
+            self.append_log(f"[辞書登録エラー] 辞書の保存または反映に失敗しました: {exc}")
+
+    def on_dict_del_requested(self, word: str) -> None:
+        try:
+            DICT_DIR.mkdir(parents=True, exist_ok=True)
+            dict_file = DICT_DIR / "配信コメント.json"
+            
+            if dict_file.exists():
+                with open(dict_file, "r", encoding="utf-8") as f:
+                    words = json.load(f)
+            else:
+                words = []
+                
+            # 単語を削除
+            new_words = [w for w in words if w.get("word") != word]
+            
+            if len(new_words) == len(words):
+                self.append_log(f"[辞書削除警告] 「{word}」は配信コメントグループに見つかりませんでした。")
+                return
+                
+            with open(dict_file, "w", encoding="utf-8") as f:
+                json.dump(new_words, f, ensure_ascii=False, indent=2)
+                
+            self.append_log(f"[辞書削除完了] 「{word}」を辞書から削除しました（配信コメントグループ）。")
+            
+            # メイン設定画面のメモリ上にある辞書も更新
+            if hasattr(self, "word_dict") and isinstance(self.word_dict, dict):
+                self.word_dict["配信コメント"] = new_words
+
+            # 全辞書データのロードと統合
+            all_dict = self.load_all_word_dict_data()
+            merged_list = []
+            for group_words in all_dict.values():
+                merged_list.extend(group_words)
+                
+            if self.speech_worker is not None and self.speech_worker.isRunning():
+                self.speech_worker.word_list = merged_list
+                
+        except Exception as exc:
+            self.append_log(f"[辞書削除エラー] 辞書の保存または反映に失敗しました: {exc}")
+
     def auto_scroll_to_bottom(self, min_val: int, max_val: int) -> None:
         bar = self.comment_list.verticalScrollBar()
         current_val = bar.value()
         page_step = bar.pageStep()
         if max_val - current_val < page_step + 100:
             bar.setValue(max_val)
-
-    def test_display(self) -> None:
-        self.add_comment_item({
-            "author": "システム通知",
-            "message": "表示テストを開始します✨（システム通知）",
-            "profile_image_url": "",
-            "is_skip": False
-        })
-        self.add_comment_item({
-            "author": "四国めたん",
-            "message": "過去ログ読み飛ばしのスキップテストです。😭",
-            "profile_image_url": "https://picsum.photos/100?random=1",
-            "is_skip": True
-        })
-        self.add_comment_item({
-            "author": "ずんだもん",
-            "message": "これはパレット色を用いたリッチテキスト表示のテストなのだ！😂👏",
-            "profile_image_url": "https://picsum.photos/100?random=2",
-            "is_skip": False
-        })
 
     def clear_all_logs(self) -> None:
         self.log_text.clear()
@@ -633,6 +729,8 @@ class LiveVoiceBridgeApp(QObject):
             word_list=word_list,
         )
         self.speech_worker.error.connect(self.show_error)
+        self.speech_worker.dict_add_requested.connect(self.on_dict_add_requested)
+        self.speech_worker.dict_del_requested.connect(self.on_dict_del_requested)
         self.speech_worker.start()
 
         self.chat_worker = ChatStreamWorker(
@@ -656,11 +754,18 @@ class LiveVoiceBridgeApp(QObject):
     def stop_all(self) -> None:
         if self.chat_worker is not None:
             self.chat_worker.stop()
-            self.chat_worker.wait(1000)
+            # 3秒待機し、終了しなければ強制終了
+            if not self.chat_worker.wait(3000):
+                self.chat_worker.terminate()
+                self.chat_worker.wait()
             self.chat_worker = None
+
         if self.speech_worker is not None:
             self.speech_worker.stop()
-            self.speech_worker.wait(1000)
+            # 3秒待機し、終了しなければ強制終了
+            if not self.speech_worker.wait(3000):
+                self.speech_worker.terminate()
+                self.speech_worker.wait()
             self.speech_worker = None
 
         # 自動起動したVOICEVOXプロセスがあれば終了
@@ -680,12 +785,7 @@ class LiveVoiceBridgeApp(QObject):
 
     def on_chat_finished(self) -> None:
         self.append_log("コメント受信を停止しました。")
-        if self.speech_worker is not None:
-            self.speech_worker.stop()
-        self.chat_worker = None
-        self.speech_worker = None
-        self.set_running_ui(False)
-        self.status_label.setText("停止中")
+        self.stop_all()
 
     def show(self) -> None:
         self.window.show()

@@ -26,6 +26,10 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 import json
+from pykakasi import kakasi
+
+# pykakasi初期化
+_kks = kakasi()
 
 from core.workers import SETTINGS_UI_FILE, DICT_DIR, DEFAULT_WORD_LIST
 
@@ -33,6 +37,53 @@ from core.workers import SETTINGS_UI_FILE, DICT_DIR, DEFAULT_WORD_LIST
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from main import LiveVoiceBridgeApp
+
+
+def get_speaker_group(name: str) -> str:
+    if not name:
+        return "その他"
+    
+    # 主要キャラクターの「行」を優先適用
+    known_speakers = {
+        "四国めたん": "さ行",
+        "ずんだもん": "さ行",
+        "春日部つむぎ": "か行",
+        "雨晴はう": "あ行",
+        "波音リツ": "は行",
+        "玄野武宏": "か行",
+        "白上虎太郎": "さ行",
+        "青山龍星": "あ行",
+        "冥鳴ひまり": "ま行",
+        "九州そら": "か行",
+        "もち子さん": "ま行",
+        "剣崎めすの": "か行", # けんざき
+    }
+    
+    # 漢字表記と行の簡易辞書
+    if name in known_speakers:
+        return known_speakers[name]
+
+    # pykakasi でひらがなに変換
+    result = _kks.convert(name)
+    hira_name = "".join([item['hira'] for item in result])
+    if not hira_name:
+        return "その他"
+        
+    first_char = hira_name[0]
+    
+    # 五十音行の判定
+    if first_char in "あいうえおぁぃぅぇぉ": return "あ行"
+    if first_char in "かきくけこがぎぐげご": return "か行"
+    if first_char in "さしすせそざじずぜぞ": return "さ行"
+    if first_char in "たちつてとだぢづでどっ": return "た行"
+    if first_char in "なにぬねの": return "な行"
+    if first_char in "はひふへほばびぶべぼぱぴぷぺぽ": return "は行"
+    if first_char in "まみむめも": return "ま行"
+    if first_char in "やゆよゃゅょ": return "や行"
+    if first_char in "らりるれろ": return "ら行"
+    if first_char in "わをんゐゑ": return "わ行"
+    
+    return "その他"
 
 
 class HiraganaDelegate(QStyledItemDelegate):
@@ -107,6 +158,11 @@ class SettingsDialog(QObject):
         self.speaker_menu = QMenu(self.dialog_window)
         self.speaker_button.setMenu(self.speaker_menu)
         self.rebuild_speaker_menu()
+
+        # 最大文字数スピンボックスの設定 (-1で無制限)
+        self.max_length_spin.setMinimum(-1)
+        self.max_length_spin.setSpecialValueText("無制限")
+        self.max_length_spin.setMaximum(1000)
 
         self.load_settings()
         self.connect_signals()
@@ -228,16 +284,46 @@ class SettingsDialog(QObject):
 
     def rebuild_speaker_menu(self) -> None:
         self.speaker_menu.clear()
+
+        # 五十音順のグループ順序
+        group_order = ["あ行", "か行", "さ行", "た行", "な行", "は行", "ま行", "や行", "ら行", "わ行", "その他"]
+
+        # キャラクターをグループごとに分類
+        grouped_speakers = {g: {} for g in group_order}
+
         for speaker_name, styles in self.speakers_data.items():
-            sub_menu = self.speaker_menu.addMenu(speaker_name)
-            for style_name, style_id in styles:
-                action = QAction(style_name, self.dialog_window)
-                action.setData(style_id)
-                action.triggered.connect(
-                    lambda checked=False, s_name=speaker_name, st_name=style_name, s_id=style_id: 
-                    self.on_style_selected(s_name, st_name, s_id)
-                )
-                sub_menu.addAction(action)
+            group = get_speaker_group(speaker_name)
+            if group not in grouped_speakers:
+                group = "その他"
+            grouped_speakers[group][speaker_name] = styles
+
+        # グループごとにメニューを作成
+        for group_name in group_order:
+            speakers_in_group = grouped_speakers[group_name]
+            if not speakers_in_group:
+                continue
+
+            # 五十音グループのサブメニューを作成 (例: "あ行")
+            group_menu = self.speaker_menu.addMenu(group_name)
+
+            # キャラクター名をフリガナ順にソート
+            def get_sort_key(name):
+                res = _kks.convert(name)
+                return "".join([x['hira'] for x in res])
+
+            sorted_speakers = sorted(speakers_in_group.keys(), key=get_sort_key)
+
+            for speaker_name in sorted_speakers:
+                styles = speakers_in_group[speaker_name]
+                char_menu = group_menu.addMenu(speaker_name)
+                for style_name, style_id in styles:
+                    action = QAction(style_name, self.dialog_window)
+                    action.setData(style_id)
+                    action.triggered.connect(
+                        lambda checked=False, s_name=speaker_name, st_name=style_name, s_id=style_id: 
+                        self.on_style_selected(s_name, st_name, s_id)
+                    )
+                    char_menu.addAction(action)
 
     def on_style_selected(self, speaker_name: str, style_name: str, speaker_id: int) -> None:
         self.current_speaker_id = speaker_id
