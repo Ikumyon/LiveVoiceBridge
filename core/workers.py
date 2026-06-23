@@ -455,7 +455,6 @@ DEFAULT_CONFIG = {
     "youtube_url": "",
     "speed": 1.0,
     "skip_history": True,
-    "read_author": False,
     "read_super_chat": True,
     "max_length": 50,
     "dict_group": "デフォルト",
@@ -474,8 +473,54 @@ DEFAULT_CONFIG = {
         "url": "http://127.0.0.1:50032",
         "path": "",
         "speaker_id": 1
-    }
+    },
+    "bouyomichan": {
+        "url": "127.0.0.1:50001",
+        "path": "",
+        "speaker_id": 0
+    },
+    "read_blocks": [
+        {"type": "message"}
+    ]
 }
+
+READ_BLOCK_TYPES = {"author", "message", "text"}
+DEFAULT_READ_BLOCKS = [{"type": "message"}]
+
+
+def normalize_read_blocks(blocks: object) -> list[dict]:
+    if not isinstance(blocks, list):
+        return [block.copy() for block in DEFAULT_READ_BLOCKS]
+
+    normalized = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type not in READ_BLOCK_TYPES:
+            continue
+        if block_type == "text":
+            value = str(block.get("value", ""))
+            if value:
+                normalized.append({"type": "text", "value": value})
+        else:
+            normalized.append({"type": block_type})
+
+    return normalized or [block.copy() for block in DEFAULT_READ_BLOCKS]
+
+
+def build_read_text(read_blocks: list[dict], author: str, message: str) -> str:
+    parts = []
+    for block in normalize_read_blocks(read_blocks):
+        block_type = block["type"]
+        if block_type == "author":
+            parts.append(author)
+        elif block_type == "message":
+            parts.append(message)
+        elif block_type == "text":
+            parts.append(block.get("value", ""))
+    return "".join(parts).strip()
+
 
 DEFAULT_WORD_LIST = [
     {"word": "✨", "reading": "きらきら", "pos": "名詞", "comment": "初期絵文字サンプル"},
@@ -628,6 +673,7 @@ class SpeechWorker(QThread):
                 futures.append(None)
                 continue
                 
+            self.log.emit(f"[SpeechWorker] 音声合成キュー追加: '{text}'")
             future = self.executor.submit(
                 self.synthesize_wav,
                 text,
@@ -649,13 +695,18 @@ class SpeechWorker(QThread):
                 
             try:
                 # このセグメントの合成完了を待つ (ブロック)
+                self.log.emit(f"[SpeechWorker] 再生開始を待機中: '{seg.get('text', '')}'")
                 wav_path = future.result()
                 if wav_path:
+                    self.log.emit(f"[SpeechWorker] 再生中: {wav_path}")
                     play_wav(wav_path)
+                    self.log.emit("[SpeechWorker] 再生完了")
                     try:
                         os.remove(wav_path)
                     except OSError:
                         pass
+                else:
+                    self.log.emit("[SpeechWorker] WAVファイル生成失敗のため再生スキップ")
             except Exception as exc:
                 self.error.emit(f"音声再生エラー: {exc}")
                 
@@ -676,6 +727,7 @@ class SpeechWorker(QThread):
 
     def synthesize_wav(self, text: str, speed: float = None, pitch: float = None, volume: float = None, speaker_id: int = None, echo: int = None, yamabiko: int = None, panning: str = None) -> str | None:
         try:
+            self.log.emit(f"[SpeechWorker] 音声合成リクエスト送信: '{text}' (話者: {speaker_id})")
             text = replace_words(text, self.word_list)
             text = replace_emojis(text)
             
@@ -693,6 +745,7 @@ class SpeechWorker(QThread):
             if not content:
                 raise RuntimeError("音声合成に失敗しました。")
 
+            self.log.emit(f"[SpeechWorker] 音声合成データ取得成功 (サイズ: {len(content)} bytes)")
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
                 fp.write(content)
                 wav_path = fp.name
@@ -702,6 +755,7 @@ class SpeechWorker(QThread):
             return wav_path
         except Exception as e:
             self.error.emit(f"並列音声合成失敗: {e}")
+            self.log.emit(f"[SpeechWorker] 音声合成例外発生: {e}")
             return None
 
     def speak(self, text: str, speed: float = None, pitch: float = None, volume: float = None, speaker_id: int = None, echo: int = None, yamabiko: int = None, panning: str = None) -> None:
@@ -731,18 +785,18 @@ class ChatStreamWorker(QThread):
         youtube_url_or_id: str,
         api_key: str,
         skip_history: bool,
-        read_author: bool,
         read_super_chat: bool,
         max_length: int,
+        read_blocks: list[dict],
     ):
         super().__init__()
         self.speech_queue = speech_queue
         self.youtube_url_or_id = youtube_url_or_id
         self.api_key = api_key
         self.skip_history = skip_history
-        self.read_author = read_author
         self.read_super_chat = read_super_chat
         self.max_length = max_length
+        self.read_blocks = normalize_read_blocks(read_blocks)
         self._running = True
         self._channel = None
 
@@ -860,7 +914,8 @@ class ChatStreamWorker(QThread):
 
                         is_skip = first_response and self.skip_history
 
-                        segments, play_files = parse_comment_into_segments(message)
+                        read_text = build_read_text(self.read_blocks, author, message)
+                        segments, play_files = parse_comment_into_segments(read_text)
                         clean_msg = "".join([s["text"] for s in segments])
 
                         self.comment_received.emit({
@@ -879,8 +934,6 @@ class ChatStreamWorker(QThread):
                                 text_to_speak = seg["text"]
                                 if not text_to_speak:
                                     continue
-                                if idx == 0 and self.read_author:
-                                    text_to_speak = f"{author}さん。{text_to_speak}"
                                     
                                 queue_item = {
                                     "text": text_to_speak,

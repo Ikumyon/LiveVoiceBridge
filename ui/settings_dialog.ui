@@ -208,13 +208,6 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="readAuthorCheckBox">
-            <property name="text">
-             <string>投稿者名も読む</string>
-            </property>
-           </widget>
-          </item>
-          <item>
            <widget class="QCheckBox" name="readSuperChatCheckBox">
             <property name="text">
              <string>スパチャ・メンバー通知も読む</string>
@@ -246,6 +239,103 @@
              </size>
             </property>
            </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="readBlocksGroupBox">
+         <property name="title">
+          <string>読み上げ文章</string>
+         </property>
+         <layout class="QVBoxLayout" name="readBlocksVBoxLayout">
+          <item>
+           <widget class="QScrollArea" name="readBlockScrollArea">
+            <property name="focusPolicy">
+             <enum>Qt::FocusPolicy::NoFocus</enum>
+            </property>
+            <property name="horizontalScrollBarPolicy">
+             <enum>Qt::ScrollBarPolicy::ScrollBarAsNeeded</enum>
+            </property>
+            <property name="verticalScrollBarPolicy">
+             <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+            </property>
+            <property name="widgetResizable">
+             <bool>true</bool>
+            </property>
+            <widget class="QWidget" name="readBlockScrollContent">
+             <property name="geometry">
+              <rect>
+               <x>0</x>
+               <y>0</y>
+               <width>596</width>
+               <height>72</height>
+              </rect>
+             </property>
+             <layout class="QHBoxLayout" name="readBlockHBoxLayout">
+              <property name="leftMargin">
+               <number>6</number>
+              </property>
+              <property name="topMargin">
+               <number>6</number>
+              </property>
+              <property name="rightMargin">
+               <number>6</number>
+              </property>
+              <property name="bottomMargin">
+               <number>6</number>
+              </property>
+              <property name="spacing">
+               <number>6</number>
+              </property>
+             </layout>
+            </widget>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="readBlockActionLayout">
+            <item>
+             <widget class="QLabel" name="readBlockAddLabel">
+              <property name="text">
+               <string>追加:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="addAuthorBlockButton">
+              <property name="text">
+               <string>投稿者名</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="addMessageBlockButton">
+              <property name="text">
+               <string>本文</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="addTextBlockButton">
+              <property name="text">
+               <string>テキスト</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="readBlockActionSpacer">
+              <property name="orientation">
+               <enum>Qt::Orientation::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>

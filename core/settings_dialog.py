@@ -4,10 +4,11 @@ import os
 import platform
 import requests
 
-from PySide6.QtCore import QFile, QObject, QRegularExpression, Signal, Qt
-from PySide6.QtGui import QAction, QRegularExpressionValidator, QColor
+from PySide6.QtCore import QFile, QMimeData, QObject, QPoint, QRegularExpression, Signal, Qt
+from PySide6.QtGui import QAction, QDrag, QRegularExpressionValidator, QColor
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -17,18 +18,21 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QToolButton,
+    QScrollArea,
     QSpinBox,
     QStyledItemDelegate,
-    QVBoxLayout,
     QComboBox,
+    QVBoxLayout,
     QTableWidget,
     QTableWidgetItem,
     QInputDialog,
     QHBoxLayout,
-    QGroupBox,
     QSlider,
     QLabel,
     QColorDialog,
+    QFrame,
+    QWidget,
 )
 import json
 from pykakasi import kakasi
@@ -36,7 +40,7 @@ from pykakasi import kakasi
 # pykakasi初期化
 _kks = kakasi()
 
-from core.workers import SETTINGS_UI_FILE, DICT_DIR, DEFAULT_WORD_LIST
+from core.workers import SETTINGS_UI_FILE, DICT_DIR, DEFAULT_WORD_LIST, normalize_read_blocks
 
 # 循環参照を防ぐためにTYPE_CHECKINGを使用
 from typing import TYPE_CHECKING
@@ -107,7 +111,120 @@ class HiraganaDelegate(QStyledItemDelegate):
         return editor
 
 
+class PlaceholderFrame(QFrame):
+    def __init__(self, dialog: SettingsDialog):
+        super().__init__()
+        self.dialog = dialog
+        self.setAcceptDrops(True)
 
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(ReadBlockFrame.MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(ReadBlockFrame.MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if event.mimeData().hasFormat(ReadBlockFrame.MIME_TYPE):
+            source_id = int(bytes(event.mimeData().data(ReadBlockFrame.MIME_TYPE)).decode("utf-8"))
+            self.dialog.drop_on_placeholder(source_id)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
+
+
+class ReadBlockFrame(QFrame):
+    move_requested = Signal(int)
+    MIME_TYPE = "application/x-livevoicebridge-read-block"
+
+    def __init__(self, block_id: int, dialog: SettingsDialog):
+        super().__init__()
+        self.block_id = block_id
+        self.dialog = dialog
+        self._drag_start_pos = QPoint()
+        self.setAcceptDrops(True)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
+        if distance < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        mime_data = QMimeData()
+        mime_data.setData(self.MIME_TYPE, str(self.block_id).encode("utf-8"))
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec(Qt.DropAction.MoveAction)
+        # ドラッグ終了時のクリーンアップ
+        self.dialog.placeholder.hide()
+        if self.dialog.read_block_layout.indexOf(self.dialog.placeholder) != -1:
+            self.dialog.read_block_layout.removeWidget(self.dialog.placeholder)
+        self.dialog.update_read_block_scroll_area_height()
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(self.MIME_TYPE):
+            source_id = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
+            if source_id != self.block_id:
+                self._update_placeholder_pos(event.position().x(), source_id)
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(self.MIME_TYPE):
+            source_id = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
+            if source_id != self.block_id:
+                self._update_placeholder_pos(event.position().x(), source_id)
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if not event.mimeData().hasFormat(self.MIME_TYPE):
+            super().dropEvent(event)
+            return
+        source_id = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
+        if source_id != self.block_id:
+            self.move_requested.emit(source_id)
+        event.acceptProposedAction()
+
+    def _update_placeholder_pos(self, x: float, source_id: int) -> None:
+        widgets = self.dialog.read_block_widgets()
+        source_widget = next((w for w in widgets if w.block_id == source_id), None)
+        if source_widget:
+            self.dialog.placeholder.setFixedSize(source_widget.size())
+            
+        layout = self.dialog.read_block_layout
+        target_index = layout.indexOf(self)
+        
+        insert_after = x > (self.width() / 2)
+        if insert_after:
+            target_index += 1
+            
+        current_placeholder_idx = layout.indexOf(self.dialog.placeholder)
+        
+        if current_placeholder_idx == target_index:
+            return
+            
+        if current_placeholder_idx != -1:
+            layout.removeWidget(self.dialog.placeholder)
+            
+        layout.insertWidget(target_index, self.dialog.placeholder)
+        self.dialog.placeholder.show()
+        self.dialog.update_read_block_scroll_area_height()
 
 
 class SettingsDialog(QObject):
@@ -133,13 +250,20 @@ class SettingsDialog(QObject):
         self.max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "maxLengthSpinBox")
         self.speed_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "speedDoubleSpinBox")
         self.skip_history_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "skipHistoryCheckBox")
-        self.read_author_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readAuthorCheckBox")
         self.read_super_chat_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readSuperChatCheckBox")
         self.check_updates_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "checkUpdatesCheckBox")
         self.tts_path_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "ttsPathLineEdit")
         self.tts_path_browse_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsPathBrowseButton")
         self.tts_test_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsTestButton")
         self.button_box: QDialogButtonBox = self.dialog_window.findChild(QDialogButtonBox, "buttonBox")
+        self.read_block_scroll_area: QScrollArea = self.dialog_window.findChild(QScrollArea, "readBlockScrollArea")
+        self.read_block_container: QWidget = self.dialog_window.findChild(QWidget, "readBlockScrollContent")
+        self.read_block_layout: QHBoxLayout = self.dialog_window.findChild(QHBoxLayout, "readBlockHBoxLayout")
+        self.read_block_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.add_author_block_button: QPushButton = self.dialog_window.findChild(QPushButton, "addAuthorBlockButton")
+        self.add_message_block_button: QPushButton = self.dialog_window.findChild(QPushButton, "addMessageBlockButton")
+        self.add_text_block_button: QPushButton = self.dialog_window.findChild(QPushButton, "addTextBlockButton")
+        self._read_block_next_id = 1
 
         # 読み替え辞書UIのバインド
         self.word_table: QTableWidget = self.dialog_window.findChild(QTableWidget, "wordTableWidget")
@@ -162,6 +286,11 @@ class SettingsDialog(QObject):
         self.current_active_group_name = ""
         self._block_group_change_signal = False
 
+        self.placeholder = PlaceholderFrame(self)
+        self.placeholder.setFrameShape(QFrame.Shape.StyledPanel)
+        self.placeholder.setStyleSheet("QFrame { border: 2px dashed #3498db; background-color: rgba(52, 152, 219, 20); }")
+        self.placeholder.hide()
+
         # プルダウンメニューの初期設定
         self.speakers_data = {}
         self.current_speaker_id = 1
@@ -182,11 +311,14 @@ class SettingsDialog(QObject):
 
         # 音声エンジン選択のバインド
         self.tts_engine_combo: QComboBox = self.dialog_window.findChild(QComboBox, "ttsEngineComboBox")
+        if self.tts_engine_combo.findText("BOUYOMICHAN") == -1:
+            self.tts_engine_combo.addItem("BOUYOMICHAN")
 
         # 各エンジン用の一時設定バッファ
         self.engine_settings = {
             "voicevox": {"url": "http://127.0.0.1:50021", "path": "", "speaker_id": 1},
-            "coeiroink": {"url": "http://127.0.0.1:50032", "path": "", "speaker_id": 1}
+            "coeiroink": {"url": "http://127.0.0.1:50032", "path": "", "speaker_id": 1},
+            "bouyomichan": {"url": "127.0.0.1:50001", "path": "", "speaker_id": 0}
         }
         self.current_active_engine = "voicevox"
 
@@ -216,6 +348,12 @@ class SettingsDialog(QObject):
         self.engine_settings["coeiroink"]["path"] = coe_config.get("path", "")
         self.engine_settings["coeiroink"]["speaker_id"] = int(coe_config.get("speaker_id", 1))
 
+        # 棒読みちゃん設定の読み込み
+        bouyomi_config = self.main_app.config.get("bouyomichan", {})
+        self.engine_settings["bouyomichan"]["url"] = bouyomi_config.get("url", "127.0.0.1:50001")
+        self.engine_settings["bouyomichan"]["path"] = bouyomi_config.get("path", "")
+        self.engine_settings["bouyomichan"]["speaker_id"] = int(bouyomi_config.get("speaker_id", 0))
+
         # 画面のコントロールへ現在アクティブなエンジンの設定値を適用
         active_config = self.engine_settings[self.current_active_engine]
         self.tts_url_line.setText(active_config["url"])
@@ -234,9 +372,9 @@ class SettingsDialog(QObject):
             self.tts_engine_combo.setCurrentIndex(idx)
 
         self.skip_history_check.setChecked(bool(self.main_app.config.get("skip_history", True)))
-        self.read_author_check.setChecked(bool(self.main_app.config.get("read_author", False)))
         self.read_super_chat_check.setChecked(bool(self.main_app.config.get("read_super_chat", True)))
         self.check_updates_check.setChecked(bool(self.main_app.config.get("check_updates", True)))
+        self.set_read_blocks(self.main_app.config.get("read_blocks"))
 
         # 読み替え辞書のロード
         self.word_dict = self.main_app.load_all_word_dict_data()
@@ -279,12 +417,13 @@ class SettingsDialog(QObject):
         # 各エンジンのネストされた設定値を config に保存
         self.main_app.config["voicevox"] = self.engine_settings["voicevox"]
         self.main_app.config["coeiroink"] = self.engine_settings["coeiroink"]
+        self.main_app.config["bouyomichan"] = self.engine_settings["bouyomichan"]
 
         self.main_app.config["max_length"] = self.max_length_spin.value()
         self.main_app.config["speed"] = self.speed_spin.value()
         self.main_app.config["skip_history"] = self.skip_history_check.isChecked()
-        self.main_app.config["read_author"] = self.read_author_check.isChecked()
         self.main_app.config["read_super_chat"] = self.read_super_chat_check.isChecked()
+        self.main_app.config["read_blocks"] = self.get_read_blocks()
         self.main_app.config["check_updates"] = self.check_updates_check.isChecked()
 
         # 読み替え辞書のセーブ
@@ -316,7 +455,6 @@ class SettingsDialog(QObject):
 
         # リアルタイム反映用の変更検知
         self.skip_history_check.stateChanged.connect(lambda _: self.settings_changed.emit())
-        self.read_author_check.stateChanged.connect(lambda _: self.settings_changed.emit())
         self.read_super_chat_check.stateChanged.connect(lambda _: self.settings_changed.emit())
         self.check_updates_check.stateChanged.connect(lambda _: self.settings_changed.emit())
         self.speed_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
@@ -337,6 +475,139 @@ class SettingsDialog(QObject):
         self.bg_color_button.clicked.connect(self.select_bg_color)
         self.border_color_button.clicked.connect(self.select_border_color)
         self.tts_engine_combo.currentTextChanged.connect(self.on_tts_engine_changed)
+        self.add_author_block_button.clicked.connect(lambda: self.add_read_block("author"))
+        self.add_message_block_button.clicked.connect(lambda: self.add_read_block("message"))
+        self.add_text_block_button.clicked.connect(lambda: self.add_read_block("text", ""))
+
+    def set_read_blocks(self, blocks: object) -> None:
+        while self.read_block_layout.count():
+            item = self.read_block_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for block in normalize_read_blocks(blocks):
+            self.add_read_block(block["type"], block.get("value", ""), emit_changed=False)
+        self.update_read_block_scroll_area_height()
+
+    def add_read_block(self, block_type: str, value: str = "", emit_changed: bool = True) -> None:
+        labels = {
+            "author": "投稿者名",
+            "message": "本文",
+            "text": "テキスト",
+        }
+        block_id = self._read_block_next_id
+        self._read_block_next_id += 1
+
+        block_widget = ReadBlockFrame(block_id, self)
+        block_widget.move_requested.connect(self.drop_on_placeholder)
+        block_widget.setProperty("blockType", block_type)
+        block_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        block_widget.setStyleSheet(
+            "QFrame { background-color: palette(base); border: 1px solid transparent; }"
+            "QFrame:hover { border: 1px solid #3498db; background-color: rgba(52, 152, 219, 20); }"
+        )
+        layout = QHBoxLayout(block_widget)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetFixedSize)
+
+        if block_type != "text":
+            title_label = QLabel(labels[block_type])
+            title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            layout.addWidget(title_label)
+
+        text_input = None
+        if block_type == "text":
+            text_input = QLineEdit(value)
+            text_input.setPlaceholderText("読み上げる固定テキスト")
+            text_input.textChanged.connect(lambda _: self.on_text_block_changed(text_input, block_widget))
+            layout.addWidget(text_input)
+            self.update_text_block_width(text_input, block_widget)
+
+        delete_button = QToolButton()
+        delete_button.setText("×")
+        delete_button.setAutoRaise(True)
+        delete_button.setToolTip("削除")
+        delete_button.setStyleSheet("QToolButton:hover { background-color: #c0392b; color: white; }")
+        delete_button.clicked.connect(lambda: self.delete_read_block(block_widget))
+        layout.addWidget(delete_button)
+
+        self.read_block_layout.addWidget(block_widget)
+        self.update_read_block_scroll_area_height()
+        if emit_changed:
+            self.settings_changed.emit()
+
+    def update_text_block_width(self, text_input: QLineEdit, block_widget: QFrame) -> None:
+        text = text_input.text() or text_input.placeholderText()
+        width = text_input.fontMetrics().horizontalAdvance(text) + 36
+        text_input.setFixedWidth(max(80, min(width, 360)))
+        block_widget.adjustSize()
+
+    def on_text_block_changed(self, text_input: QLineEdit, block_widget: QFrame) -> None:
+        self.update_text_block_width(text_input, block_widget)
+        self.update_read_block_scroll_area_height()
+        self.settings_changed.emit()
+
+    def read_block_widgets(self) -> list[QFrame]:
+        widgets = []
+        for index in range(self.read_block_layout.count()):
+            widget = self.read_block_layout.itemAt(index).widget()
+            if widget is not None and widget is not self.placeholder:
+                widgets.append(widget)
+        return widgets
+
+    def update_read_block_scroll_area_height(self) -> None:
+        widgets = self.read_block_widgets()
+        height = max((widget.sizeHint().height() for widget in widgets), default=0)
+        if height <= 0:
+            return
+        margins = self.read_block_layout.contentsMargins()
+        spacing = self.read_block_layout.spacing() * max(len(widgets) - 1, 0)
+        width = sum(widget.sizeHint().width() for widget in widgets)
+        self.read_block_container.setMinimumWidth(width + spacing + margins.left() + margins.right())
+        frame = self.read_block_scroll_area.frameWidth() * 2
+        scrollbar = self.read_block_scroll_area.horizontalScrollBar().sizeHint().height()
+        self.read_block_scroll_area.setFixedHeight(
+            height + margins.top() + margins.bottom() + frame + scrollbar
+        )
+
+    def get_read_blocks(self) -> list[dict]:
+        blocks = []
+        for widget in self.read_block_widgets():
+            block_type = widget.property("blockType")
+            if block_type == "text":
+                text_input = widget.findChild(QLineEdit) if widget else None
+                blocks.append({"type": "text", "value": text_input.text() if text_input else ""})
+            elif block_type in {"author", "message"}:
+                blocks.append({"type": block_type})
+        return normalize_read_blocks(blocks)
+
+    def delete_read_block(self, block_widget: QFrame) -> None:
+        self.read_block_layout.removeWidget(block_widget)
+        block_widget.deleteLater()
+        if not self.read_block_widgets():
+            self.add_read_block("message", emit_changed=False)
+        self.update_read_block_scroll_area_height()
+        self.settings_changed.emit()
+
+    def drop_on_placeholder(self, source_id: int) -> None:
+        widgets = self.read_block_widgets()
+        source_widget = next((widget for widget in widgets if widget.block_id == source_id), None)
+        if source_widget is None:
+            return
+        layout = self.read_block_layout
+        target_index = layout.indexOf(self.placeholder)
+        if target_index == -1:
+            return
+        source_index = layout.indexOf(source_widget)
+        layout.removeWidget(source_widget)
+        if source_index != -1 and source_index < target_index:
+            target_index -= 1
+        layout.insertWidget(target_index, source_widget)
+        self.placeholder.hide()
+        layout.removeWidget(self.placeholder)
+        self.update_read_block_scroll_area_height()
+        self.settings_changed.emit()
 
     def on_tts_engine_changed(self, engine_name: str) -> None:
         new_engine = engine_name.lower()

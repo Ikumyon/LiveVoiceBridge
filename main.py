@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
+    QInputDialog,
 )
 from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap, QBrush, QColor, QFont, QPalette, QDesktopServices
 from PySide6.QtSvg import QSvgRenderer
@@ -55,8 +56,11 @@ from core.workers import (
     now_text,
     CONFIG_FILE,
     DEFAULT_CONFIG,
+    normalize_read_blocks,
     DICT_DIR,
     DEFAULT_WORD_LIST,
+    build_read_text,
+    parse_comment_into_segments,
 )
 from core.settings_dialog import SettingsDialog
 from core.comment_window import CommentWindow
@@ -64,6 +68,58 @@ from core.tts_engines import BaseTTSEngine
 import core.tts_factory as tts_factory
 import core.dictionary as dictionary
 
+
+# ------------------------------------------------------------------
+# UI・グラフィック関連ヘルパー関数（クラス外抽出）
+# ------------------------------------------------------------------
+def create_placeholder_avatar(initial: str, palette: QPalette) -> QPixmap:
+    """アバター未設定時のイニシャル入り丸形プレースホルダー画像を生成する。"""
+    pixmap = QPixmap(36, 36)
+    pixmap.fill(Qt.transparent)
+    
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    
+    bg_color = palette.color(QPalette.Link)
+    
+    painter.setBrush(QBrush(bg_color))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(0, 0, 36, 36)
+    
+    painter.setPen(QColor(Qt.white))
+    font = QFont()
+    font.setBold(True)
+    font.setPointSize(14)
+    painter.setFont(font)
+    
+    painter.drawText(0, 0, 36, 36, Qt.AlignCenter, initial)
+    painter.end()
+    return pixmap
+ 
+def clip_to_circle(pixmap: QPixmap, size: int) -> QPixmap:
+    """与えられた Pixmap を丸形にクリップ（トリミング）する。"""
+    target = QPixmap(size, size)
+    target.fill(Qt.transparent)
+    
+    painter = QPainter(target)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform)
+    
+    scaled_pixmap = pixmap.scaled(
+        size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+    )
+    
+    x_offset = (scaled_pixmap.width() - size) // 2
+    y_offset = (scaled_pixmap.height() - size) // 2
+    cropped_pixmap = scaled_pixmap.copy(x_offset, y_offset, size, size)
+    
+    brush = QBrush(cropped_pixmap)
+    painter.setBrush(brush)
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(0, 0, size, size)
+    painter.end()
+    
+    return target
 
 
 class LiveVoiceBridgeApp(QObject):
@@ -166,6 +222,19 @@ class LiveVoiceBridgeApp(QObject):
                     json.dump(DEFAULT_WORD_LIST, f, ensure_ascii=False, indent=2)
         except Exception as exc:
             print(f"辞書の初期化失敗: {exc}")
+
+        # テスト送信ボタンの動的生成
+        self.test_comment_button = QPushButton("テスト送信")
+        self.test_comment_button.clicked.connect(self.send_test_comment)
+        self.test_comment_button.hide()
+
+        button_layout = self.window.findChild(QHBoxLayout, "buttonLayout")
+        if button_layout is not None:
+            clear_btn_idx = button_layout.indexOf(self.clear_log_button)
+            if clear_btn_idx != -1:
+                button_layout.insertWidget(clear_btn_idx + 1, self.test_comment_button)
+            else:
+                button_layout.addWidget(self.test_comment_button)
 
         self.load_settings()
         self.connect_signals()
@@ -608,9 +677,9 @@ class LiveVoiceBridgeApp(QObject):
         # ダイアログで操作された最新値をスレッドへ即時反映
         if self.chat_worker is not None and self.chat_worker.isRunning():
             self.chat_worker.skip_history = dialog.skip_history_check.isChecked()
-            self.chat_worker.read_author = dialog.read_author_check.isChecked()
             self.chat_worker.read_super_chat = dialog.read_super_chat_check.isChecked()
             self.chat_worker.max_length = dialog.max_length_spin.value()
+            self.chat_worker.read_blocks = dialog.get_read_blocks()
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
             self.speech_worker.speaker_id = dialog.get_current_speaker_id()
@@ -627,9 +696,9 @@ class LiveVoiceBridgeApp(QObject):
         # スレッドのパラメータをバックアップした元の値に復元
         if self.chat_worker is not None and self.chat_worker.isRunning():
             self.chat_worker.skip_history = backup_config.get("skip_history", True)
-            self.chat_worker.read_author = backup_config.get("read_author", False)
             self.chat_worker.read_super_chat = backup_config.get("read_super_chat", True)
             self.chat_worker.max_length = backup_config.get("max_length", 50)
+            self.chat_worker.read_blocks = normalize_read_blocks(backup_config.get("read_blocks"))
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
             engine_type = backup_config.get("tts_engine", "voicevox")
@@ -690,6 +759,7 @@ class LiveVoiceBridgeApp(QObject):
 
     def start(self) -> None:
         url_or_id = self.url_line.text().strip()
+        is_debug = (url_or_id.lower() == "debug")
         api_key = self.config.get("youtube_api_key", "")
 
         engine_type = self.config.get("tts_engine", "voicevox")
@@ -703,7 +773,7 @@ class LiveVoiceBridgeApp(QObject):
         if not url_or_id:
             QMessageBox.warning(self.window, "入力不足", "YouTube URLまたはVideo IDを入力してください。")
             return
-        if not api_key:
+        if not is_debug and not api_key:
             QMessageBox.warning(self.window, "設定不足", "YouTube Data API Keyが設定されていません。メニューの ツール->設定 から入力してください。")
             return
 
@@ -732,18 +802,26 @@ class LiveVoiceBridgeApp(QObject):
             word_list=word_list,
         )
         self.speech_worker.error.connect(self.show_error)
+        self.speech_worker.log.connect(self.append_log)
         self.speech_worker.dict_add_requested.connect(self.on_dict_add_requested)
         self.speech_worker.dict_del_requested.connect(self.on_dict_del_requested)
         self.speech_worker.start()
+
+        if is_debug:
+            self.test_comment_button.show()
+            self.append_log("デバッグモードで起動しました。")
+            self.set_status("デバッグモード稼働中")
+            self.set_running_ui(True)
+            return
 
         self.chat_worker = ChatStreamWorker(
             speech_queue=self.speech_queue,
             youtube_url_or_id=url_or_id,
             api_key=api_key,
             skip_history=bool(self.config.get("skip_history", True)),
-            read_author=bool(self.config.get("read_author", False)),
             read_super_chat=bool(self.config.get("read_super_chat", True)),
             max_length=int(self.config.get("max_length", 50)),
+            read_blocks=self.config.get("read_blocks"),
         )
         self.chat_worker.comment_received.connect(self.add_comment_item)
         self.chat_worker.status.connect(self.set_status)
@@ -779,9 +857,113 @@ class LiveVoiceBridgeApp(QObject):
 
         self.status_label.setText("停止中")
         self.set_running_ui(False)
+        self.test_comment_button.hide()
 
     def on_chat_finished(self) -> None:
         self.append_log("コメント受信を停止しました。")
+        self.stop_all()
+
+    def send_test_comment(self) -> None:
+        text, ok = QInputDialog.getText(
+            self.window, "テスト送信", "読み上げるテキストを入力してください:", text="テストコメントです。"
+        )
+        if not ok or not text.strip():
+            return
+            
+        dummy_comment = {
+            "author": "テストユーザー",
+            "message": text.strip(),
+            "profile_image_url": "",
+            "is_skip": False
+        }
+        self.add_comment_item(dummy_comment)
+        
+        # 読み上げ文章の組み立て
+        read_text = build_read_text(self.config.get("read_blocks"), "テストユーザー", text.strip())
+        segments, play_files = parse_comment_into_segments(read_text)
+        if not segments:
+            return
+            
+        if play_files:
+            segments[0]["play_file"] = play_files[0]
+            
+        # 稼働中であれば speech_queue に入れる
+        if self.speech_worker is not None and self.speech_worker.isRunning():
+            self.speech_queue.put(segments)
+        else:
+            # 停止中の場合は、必要ならエンジンを立ち上げて一時スレッドで喋らせる
+            engine_type = self.config.get("tts_engine", "voicevox").lower()
+            engine_config = self.config.get(engine_type, {})
+            engine_class = tts_factory.get_engine_class(engine_type)
+            tts_url = engine_config.get("url", engine_class.DEFAULT_URL)
+            tts_path = engine_config.get("path", "")
+            
+            # メインスレッドで安全に接続確認/起動を行う
+            self.ensure_tts_running(tts_url, tts_path, engine_type)
+            
+            # 一時読み込みに必要なパラメータを取得
+            speaker_id = int(engine_config.get("speaker_id", 1))
+            speed = float(self.config.get("speed", 1.0))
+            
+            word_list = []
+            try:
+                all_dict = self.load_all_word_dict_data()
+                for words in all_dict.values():
+                    word_list.extend(words)
+            except Exception:
+                pass
+                
+            from concurrent.futures import ThreadPoolExecutor
+            executor = ThreadPoolExecutor(max_workers=1)
+            executor.submit(self._speak_test_comment_offline, segments, speaker_id, speed, word_list)
+
+    def _speak_test_comment_offline(self, segments: list[dict], speaker_id: int, speed: float, word_list: list[dict]) -> None:
+        from core.workers import replace_words, replace_emojis, play_wav, apply_audio_effects
+        import tempfile
+        
+        if self.tts_engine is None:
+            return
+            
+        for seg in segments:
+            text = seg.get("text", "")
+            if not text:
+                continue
+                
+            text = replace_words(text, word_list)
+            text = replace_emojis(text)
+            
+            target_speaker = seg.get("speaker_id") if seg.get("speaker_id") is not None else speaker_id
+            target_speed = seg.get("speed") if seg.get("speed") is not None else speed
+            target_volume = seg.get("volume") if seg.get("volume") is not None else 1.0
+            
+            try:
+                content = self.tts_engine.synthesize_wav(
+                    text=text,
+                    speed=target_speed,
+                    pitch=seg.get("pitch"),
+                    volume=target_volume,
+                    speaker_id=target_speaker
+                )
+                if content:
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+                        fp.write(content)
+                        wav_path = fp.name
+                    
+                    # エフェクトおよび定位制御の適用
+                    wav_path = apply_audio_effects(
+                        wav_path,
+                        echo_level=seg.get("echo"),
+                        yamabiko_level=seg.get("yamabiko"),
+                        panning=seg.get("panning")
+                    )
+                    
+                    play_wav(wav_path)
+                    try:
+                        os.remove(wav_path)
+                    except OSError:
+                        pass
+            except Exception as e:
+                print(f"オフラインテスト発声エラー: {e}")
         self.stop_all()
 
     def show(self) -> None:
@@ -812,56 +994,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
- 
- 
-# ------------------------------------------------------------------
-# UI・グラフィック関連ヘルパー関数（クラス外抽出）
-# ------------------------------------------------------------------
-def create_placeholder_avatar(initial: str, palette: QPalette) -> QPixmap:
-    """アバター未設定時のイニシャル入り丸形プレースホルダー画像を生成する。"""
-    pixmap = QPixmap(36, 36)
-    pixmap.fill(Qt.transparent)
-    
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    bg_color = palette.color(QPalette.Link)
-    
-    painter.setBrush(QBrush(bg_color))
-    painter.setPen(Qt.NoPen)
-    painter.drawEllipse(0, 0, 36, 36)
-    
-    painter.setPen(QColor(Qt.white))
-    font = QFont()
-    font.setBold(True)
-    font.setPointSize(14)
-    painter.setFont(font)
-    
-    painter.drawText(0, 0, 36, 36, Qt.AlignCenter, initial)
-    painter.end()
-    return pixmap
- 
-def clip_to_circle(pixmap: QPixmap, size: int) -> QPixmap:
-    """与えられた Pixmap を丸形にクリップ（トリミング）する。"""
-    target = QPixmap(size, size)
-    target.fill(Qt.transparent)
-    
-    painter = QPainter(target)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setRenderHint(QPainter.SmoothPixmapTransform)
-    
-    scaled_pixmap = pixmap.scaled(
-        size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
-    )
-    
-    x_offset = (scaled_pixmap.width() - size) // 2
-    y_offset = (scaled_pixmap.height() - size) // 2
-    cropped_pixmap = scaled_pixmap.copy(x_offset, y_offset, size, size)
-    
-    brush = QBrush(cropped_pixmap)
-    painter.setBrush(brush)
-    painter.setPen(Qt.NoPen)
-    painter.drawEllipse(0, 0, size, size)
-    painter.end()
-    
-    return target
