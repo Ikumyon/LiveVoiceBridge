@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import platform
-import requests
 
 from PySide6.QtCore import QFile, QMimeData, QObject, QPoint, QRegularExpression, Signal, Qt
 from PySide6.QtGui import QAction, QDrag, QRegularExpressionValidator, QColor
@@ -10,7 +9,6 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -34,69 +32,19 @@ from PySide6.QtWidgets import (
     QFrame,
     QWidget,
 )
-import json
-from pykakasi import kakasi
 
-# pykakasi初期化
-_kks = kakasi()
-
-from core.workers import SETTINGS_UI_FILE, DICT_DIR, DEFAULT_WORD_LIST, normalize_read_blocks
+from core.app_config import SETTINGS_UI_FILE
+from core.comment_processing import normalize_read_blocks
 
 # 循環参照を防ぐためにTYPE_CHECKINGを使用
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from main import LiveVoiceBridgeApp
-    from core.tts_engines import BaseTTSEngine
+    from core.tts.base import BaseTTSEngine
  
 import core.dictionary as dictionary
-import core.tts_factory as tts_factory
-
-
-def get_speaker_group(name: str) -> str:
-    if not name:
-        return "その他"
-    
-    # 主要キャラクターの「行」を優先適用
-    known_speakers = {
-        "四国めたん": "さ行",
-        "ずんだもん": "さ行",
-        "春日部つむぎ": "か行",
-        "雨晴はう": "あ行",
-        "波音リツ": "は行",
-        "玄野武宏": "か行",
-        "白上虎太郎": "さ行",
-        "青山龍星": "あ行",
-        "冥鳴ひまり": "ま行",
-        "九州そら": "か行",
-        "もち子さん": "ま行",
-        "剣崎めすの": "か行", # けんざき
-    }
-    
-    # 漢字表記と行の簡易辞書
-    if name in known_speakers:
-        return known_speakers[name]
-
-    # pykakasi でひらがなに変換
-    result = _kks.convert(name)
-    hira_name = "".join([item['hira'] for item in result])
-    if not hira_name:
-        return "その他"
-        
-    first_char = hira_name[0]
-    
-    # 五十音行の判定
-    if first_char in "あいうえおぁぃぅぇぉ": return "あ行"
-    if first_char in "かきくけこがぎぐげご": return "か行"
-    if first_char in "さしすせそざじずぜぞ": return "さ行"
-    if first_char in "たちつてとだぢづでどっ": return "た行"
-    if first_char in "なにぬねの": return "な行"
-    if first_char in "はひふへほばびぶべぼぱぴぷぺぽ": return "は行"
-    if first_char in "まみむめも": return "ま行"
-    if first_char in "やゆよゃゅょ": return "や行"
-    if first_char in "らりるれろ": return "ら行"
-    if first_char in "わをんゐゑ": return "わ行"
-    
-    return "その他"
+import core.tts.factory as tts_factory
+from core.speakers.utils import SPEAKER_GROUP_ORDER, group_speakers_by_kana, speaker_sort_key
 
 
 class HiraganaDelegate(QStyledItemDelegate):
@@ -234,7 +182,25 @@ class SettingsDialog(QObject):
     def __init__(self, parent_app: LiveVoiceBridgeApp):
         super().__init__()
         self.main_app = parent_app
+        self.dialog_window = self._load_dialog_window()
 
+        self._bind_basic_widgets()
+        self._bind_read_block_widgets()
+        self._bind_dictionary_widgets()
+        self._setup_dictionary_table()
+        self._init_dictionary_state()
+        self._setup_read_block_placeholder()
+        self._setup_speaker_menu()
+        self._setup_max_length_spin()
+        self._bind_popout_widgets()
+        self._setup_tts_engine_combo()
+        self._init_engine_settings()
+        self._init_color_state()
+
+        self.load_settings()
+        self.connect_signals()
+
+    def _load_dialog_window(self) -> QWidget:
         # UIファイルの読み込み
         loader = QUiLoader()
         ui_file = QFile(str(SETTINGS_UI_FILE))
@@ -242,7 +208,9 @@ class SettingsDialog(QObject):
             raise RuntimeError(f"UIファイルを開けません: {SETTINGS_UI_FILE}")
         self.dialog_window = loader.load(ui_file)
         ui_file.close()
+        return self.dialog_window
 
+    def _bind_basic_widgets(self) -> None:
         # ウィジェットのバインド
         self.api_key_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "apiKeyLineEdit")
         self.tts_url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "ttsUrlLineEdit")
@@ -256,6 +224,8 @@ class SettingsDialog(QObject):
         self.tts_path_browse_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsPathBrowseButton")
         self.tts_test_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsTestButton")
         self.button_box: QDialogButtonBox = self.dialog_window.findChild(QDialogButtonBox, "buttonBox")
+
+    def _bind_read_block_widgets(self) -> None:
         self.read_block_scroll_area: QScrollArea = self.dialog_window.findChild(QScrollArea, "readBlockScrollArea")
         self.read_block_container: QWidget = self.dialog_window.findChild(QWidget, "readBlockScrollContent")
         self.read_block_layout: QHBoxLayout = self.dialog_window.findChild(QHBoxLayout, "readBlockHBoxLayout")
@@ -265,6 +235,7 @@ class SettingsDialog(QObject):
         self.add_text_block_button: QPushButton = self.dialog_window.findChild(QPushButton, "addTextBlockButton")
         self._read_block_next_id = 1
 
+    def _bind_dictionary_widgets(self) -> None:
         # 読み替え辞書UIのバインド
         self.word_table: QTableWidget = self.dialog_window.findChild(QTableWidget, "wordTableWidget")
         self.add_word_button: QPushButton = self.dialog_window.findChild(QPushButton, "addWordButton")
@@ -275,6 +246,7 @@ class SettingsDialog(QObject):
         self.rename_group_button: QPushButton = self.dialog_window.findChild(QPushButton, "renameGroupButton")
         self.delete_group_button: QPushButton = self.dialog_window.findChild(QPushButton, "deleteGroupButton")
 
+    def _setup_dictionary_table(self) -> None:
         # テーブル設定
         self.word_table.setColumnCount(4)
         self.word_table.setHorizontalHeaderLabels(["読み", "単語", "品詞", "コメント"])
@@ -282,15 +254,18 @@ class SettingsDialog(QObject):
         # 読み列（0列目）をひらがな限定に制限
         self.word_table.setItemDelegateForColumn(0, HiraganaDelegate(self.word_table))
 
+    def _init_dictionary_state(self) -> None:
         self.word_dict = {}
         self.current_active_group_name = ""
         self._block_group_change_signal = False
 
+    def _setup_read_block_placeholder(self) -> None:
         self.placeholder = PlaceholderFrame(self)
         self.placeholder.setFrameShape(QFrame.Shape.StyledPanel)
         self.placeholder.setStyleSheet("QFrame { border: 2px dashed #3498db; background-color: rgba(52, 152, 219, 20); }")
         self.placeholder.hide()
 
+    def _setup_speaker_menu(self) -> None:
         # プルダウンメニューの初期設定
         self.speakers_data = {}
         self.current_speaker_id = 1
@@ -298,22 +273,26 @@ class SettingsDialog(QObject):
         self.speaker_button.setMenu(self.speaker_menu)
         self.rebuild_speaker_menu()
 
+    def _setup_max_length_spin(self) -> None:
         # 最大文字数スピンボックスの設定 (-1で無制限)
         self.max_length_spin.setMinimum(-1)
         self.max_length_spin.setSpecialValueText("無制限")
         self.max_length_spin.setMaximum(1000)
 
+    def _bind_popout_widgets(self) -> None:
         # UIからPiP設定ウィジェットを取得
         self.opacity_slider: QSlider = self.dialog_window.findChild(QSlider, "opacitySlider")
         self.opacity_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "opacitySpinBox")
         self.bg_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "bgColorButton")
         self.border_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "borderColorButton")
 
+    def _setup_tts_engine_combo(self) -> None:
         # 音声エンジン選択のバインド
         self.tts_engine_combo: QComboBox = self.dialog_window.findChild(QComboBox, "ttsEngineComboBox")
         if self.tts_engine_combo.findText("BOUYOMICHAN") == -1:
             self.tts_engine_combo.addItem("BOUYOMICHAN")
 
+    def _init_engine_settings(self) -> None:
         # 各エンジン用の一時設定バッファ
         self.engine_settings = {
             "voicevox": {"url": "http://127.0.0.1:50021", "path": "", "speaker_id": 1},
@@ -322,12 +301,10 @@ class SettingsDialog(QObject):
         }
         self.current_active_engine = "voicevox"
 
+    def _init_color_state(self) -> None:
         # カラー値の保持
         self.bg_color_hex = ""
         self.border_color_hex = ""
-
-        self.load_settings()
-        self.connect_signals()
 
     def load_settings(self) -> None:
         env_key = os.environ.get("YOUTUBE_API_KEY", "")
@@ -678,21 +655,10 @@ class SettingsDialog(QObject):
 
     def rebuild_speaker_menu(self) -> None:
         self.speaker_menu.clear()
-
-        # 五十音順のグループ順序
-        group_order = ["あ行", "か行", "さ行", "た行", "な行", "は行", "ま行", "や行", "ら行", "わ行", "その他"]
-
-        # キャラクターをグループごとに分類
-        grouped_speakers = {g: {} for g in group_order}
-
-        for speaker_name, styles in self.speakers_data.items():
-            group = get_speaker_group(speaker_name)
-            if group not in grouped_speakers:
-                group = "その他"
-            grouped_speakers[group][speaker_name] = styles
+        grouped_speakers = group_speakers_by_kana(self.speakers_data)
 
         # グループごとにメニューを作成
-        for group_name in group_order:
+        for group_name in SPEAKER_GROUP_ORDER:
             speakers_in_group = grouped_speakers[group_name]
             if not speakers_in_group:
                 continue
@@ -700,12 +666,7 @@ class SettingsDialog(QObject):
             # 五十音グループのサブメニューを作成 (例: "あ行")
             group_menu = self.speaker_menu.addMenu(group_name)
 
-            # キャラクター名をフリガナ順にソート
-            def get_sort_key(name):
-                res = _kks.convert(name)
-                return "".join([x['hira'] for x in res])
-
-            sorted_speakers = sorted(speakers_in_group.keys(), key=get_sort_key)
+            sorted_speakers = sorted(speakers_in_group.keys(), key=speaker_sort_key)
 
             for speaker_name in sorted_speakers:
                 styles = speakers_in_group[speaker_name]
@@ -746,30 +707,39 @@ class SettingsDialog(QObject):
         engine_type = self.tts_engine_combo.currentText().lower()
         return tts_factory.get_engine_instance(engine_type, url, exe_path)
 
+    def _fetch_speaker_data(self, url: str) -> tuple[list[dict], dict[str, list[tuple[str, int]]]]:
+        engine = self.get_engine_instance(url, "")
+        speakers = engine.get_speakers()
+        if not speakers:
+            return [], {}
+
+        new_data = {}
+        for sp in speakers:
+            name = sp.get("name", "")
+            styles_list = []
+            for style in sp.get("styles", []):
+                style_name = style.get("name", "")
+                style_id = style.get("id")
+                styles_list.append((style_name, style_id))
+            if styles_list:
+                new_data[name] = styles_list
+        return speakers, new_data
+
+    def _apply_speaker_data(self, speaker_data: dict[str, list[tuple[str, int]]]) -> bool:
+        if not speaker_data:
+            return False
+        self.speakers_data = speaker_data
+        self.rebuild_speaker_menu()
+        self.set_speaker_button_id(self.current_speaker_id)
+        return True
+
     def update_speakers_from_engine(self) -> bool:
         url = self.tts_url_line.text().strip().rstrip("/")
         if not url:
             return False
         try:
-            engine = self.get_engine_instance(url, "")
-            speakers = engine.get_speakers()
-            if speakers:
-                new_data = {}
-                for sp in speakers:
-                    name = sp.get("name", "")
-                    styles_list = []
-                    for style in sp.get("styles", []):
-                        style_name = style.get("name", "")
-                        style_id = style.get("id")
-                        styles_list.append((style_name, style_id))
-                    if styles_list:
-                        new_data[name] = styles_list
-                
-                if new_data:
-                    self.speakers_data = new_data
-                    self.rebuild_speaker_menu()
-                    self.set_speaker_button_id(self.current_speaker_id)
-                    return True
+            _, speaker_data = self._fetch_speaker_data(url)
+            return self._apply_speaker_data(speaker_data)
         except Exception as exc:
             self.main_app.append_log(f"[情報] 話者リスト取得スキップ: {exc}")
         return False
@@ -786,26 +756,11 @@ class SettingsDialog(QObject):
         )
 
         try:
-            engine = self.get_engine_instance(url, "")
-            speakers = engine.get_speakers()
+            speakers, speaker_data = self._fetch_speaker_data(url)
             if not speakers:
                 raise RuntimeError("話者情報が取得できませんでした。")
 
-            new_data = {}
-            for sp in speakers:
-                name = sp.get("name", "")
-                styles_list = []
-                for style in sp.get("styles", []):
-                    style_name = style.get("name", "")
-                    style_id = style.get("id")
-                    styles_list.append((style_name, style_id))
-                if styles_list:
-                    new_data[name] = styles_list
-            
-            if new_data:
-                self.speakers_data = new_data
-                self.rebuild_speaker_menu()
-                self.set_speaker_button_id(self.current_speaker_id)
+            if self._apply_speaker_data(speaker_data):
                 self.main_app.append_log("話者リストを更新しました。")
 
             lines: list[str] = []
@@ -904,88 +859,19 @@ class SettingsDialog(QObject):
             return
             
         try:
-            imported_count = 0
+            imported_words = dictionary.load_import_word_list(file_path)
             self.word_table.blockSignals(True)
-            
-            if file_path.endswith(".json"):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                
-                if isinstance(data, list):
-                    for item in data:
-                        row = self.word_table.rowCount()
-                        self.word_table.insertRow(row)
-                        self.word_table.setItem(row, 0, QTableWidgetItem(item.get("reading", "")))
-                        self.word_table.setItem(row, 1, QTableWidgetItem(item.get("word", "")))
-                        self.word_table.setItem(row, 2, QTableWidgetItem(item.get("pos", "名詞")))
-                        self.word_table.setItem(row, 3, QTableWidgetItem(item.get("comment", "")))
-                        imported_count += 1
-                elif isinstance(data, dict):
-                    for k, v in data.items():
-                        row = self.word_table.rowCount()
-                        self.word_table.insertRow(row)
-                        self.word_table.setItem(row, 0, QTableWidgetItem(str(v)))
-                        self.word_table.setItem(row, 1, QTableWidgetItem(str(k)))
-                        self.word_table.setItem(row, 2, QTableWidgetItem("名詞"))
-                        self.word_table.setItem(row, 3, QTableWidgetItem(""))
-                        imported_count += 1
-                        
-            elif file_path.endswith(".csv"):
-                import csv
-                with open(file_path, "r", encoding="utf-8") as f:
-                    reader = csv.reader(f)
-                    for row_data in reader:
-                        if not row_data:
-                            continue
-                        row = self.word_table.rowCount()
-                        self.word_table.insertRow(row)
-                        
-                        reading = row_data[0] if len(row_data) > 0 else ""
-                        word = row_data[1] if len(row_data) > 1 else ""
-                        pos = row_data[2] if len(row_data) > 2 else "名詞"
-                        comment = row_data[3] if len(row_data) > 3 else ""
-                        
-                        self.word_table.setItem(row, 0, QTableWidgetItem(reading))
-                        self.word_table.setItem(row, 1, QTableWidgetItem(word))
-                        self.word_table.setItem(row, 2, QTableWidgetItem(pos))
-                        self.word_table.setItem(row, 3, QTableWidgetItem(comment))
-                        imported_count += 1
 
-            elif file_path.endswith(".txt"):
-                # IME辞書形式 (TAB区切りテキスト)。エンコードの自動判別。
-                encoding = "shift_jis"
-                for enc in ["shift_jis", "utf-16", "utf-8"]:
-                    try:
-                        with open(file_path, "r", encoding=enc) as f:
-                            f.readline()
-                        encoding = enc
-                        break
-                    except Exception:
-                        continue
-                
-                with open(file_path, "r", encoding=encoding, errors="ignore") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("!") or line.startswith("#"):
-                            continue
-                        
-                        row_data = line.split("\t")
-                        if len(row_data) >= 2:
-                            row = self.word_table.rowCount()
-                            self.word_table.insertRow(row)
-                            
-                            reading = row_data[0].strip()
-                            word = row_data[1].strip()
-                            pos = row_data[2].strip() if len(row_data) > 2 else "名詞"
-                            comment = row_data[3].strip() if len(row_data) > 3 else ""
-                            
-                            self.word_table.setItem(row, 0, QTableWidgetItem(reading))
-                            self.word_table.setItem(row, 1, QTableWidgetItem(word))
-                            self.word_table.setItem(row, 2, QTableWidgetItem(pos))
-                            self.word_table.setItem(row, 3, QTableWidgetItem(comment))
-                            imported_count += 1
+            for item in imported_words:
+                row = self.word_table.rowCount()
+                self.word_table.insertRow(row)
+                self.word_table.setItem(row, 0, QTableWidgetItem(item.get("reading", "")))
+                self.word_table.setItem(row, 1, QTableWidgetItem(item.get("word", "")))
+                self.word_table.setItem(row, 2, QTableWidgetItem(item.get("pos", "名詞")))
+                self.word_table.setItem(row, 3, QTableWidgetItem(item.get("comment", "")))
             
             self.word_table.blockSignals(False)
+            imported_count = len(imported_words)
             if imported_count > 0:
                 self.settings_changed.emit()
                 QMessageBox.information(self.dialog_window, "インポート", f"{imported_count}件の単語をインポートしました。")

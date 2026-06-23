@@ -1,8 +1,8 @@
 from __future__ import annotations
-from core.tts_engines import BaseTTSEngine
-from core.voicevox import VoicevoxEngine
-from core.coeiroink import CoeiroinkEngine
-from core.bouyomichan import BouyomiChanEngine
+from core.tts.base import BaseTTSEngine
+from core.tts.engines.voicevox import VoicevoxEngine
+from core.tts.engines.coeiroink import CoeiroinkEngine
+from core.tts.engines.bouyomichan import BouyomiChanEngine
 
 ENGINE_CLASSES: dict[str, type[BaseTTSEngine]] = {
     "voicevox": VoicevoxEngine,

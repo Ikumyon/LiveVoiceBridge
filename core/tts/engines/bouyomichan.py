@@ -2,7 +2,7 @@ import socket
 import struct
 import io
 import wave
-from core.tts_engines import BaseTTSEngine
+from core.tts.base import BaseTTSEngine
 
 class BouyomiChanEngine(BaseTTSEngine):
     """棒読みちゃん（TCP接続）用の音声合成エンジン。"""
