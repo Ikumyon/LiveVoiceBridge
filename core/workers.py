@@ -20,6 +20,10 @@ from PySide6.QtCore import QThread, Signal
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from core.tts_engines import BaseTTSEngine
+
 def replace_words(text: str, word_list: list[dict]) -> str:
     if not word_list:
         return text
@@ -412,6 +416,7 @@ def apply_audio_effects(wav_path: str, echo_level: int = None, yamabiko_level: i
         print(f"Effect processing error: {e}")
         return wav_path
 
+APP_VERSION = "1.0.0"
 GRPC_TARGET = "dns:///youtube.googleapis.com:443"
 
 TEXT_MESSAGE_EVENT = 1
@@ -432,7 +437,10 @@ MAIN_UI_FILE = UI_DIR / "main_window.ui"
 SETTINGS_UI_FILE = UI_DIR / "settings_dialog.ui"
 ICON_FILE = APP_DIR / "assets" / "icon.png"
 SETTINGS_ICON_FILE = APP_DIR / "assets" / "settings.svg"
-PIP_ICON_FILE = APP_DIR / "assets" / "picture-in-picture-2.svg"
+PIP_OFF_ICON_FILE = APP_DIR / "assets" / "picture-in-picture-2.svg"
+PIP_ON_ICON_FILE = APP_DIR / "assets" / "picture-in-picture.svg"
+TV_ICON_FILE = APP_DIR / "assets" / "tv.svg"
+PIP_ICON_FILE = PIP_OFF_ICON_FILE
 
 if getattr(sys, "frozen", False):
     EXE_DIR = Path(sys.executable).parent
@@ -445,15 +453,28 @@ CONFIG_FILE = EXE_DIR / "config.json"
 DEFAULT_CONFIG = {
     "youtube_api_key": "",
     "youtube_url": "",
-    "voicevox_url": "http://127.0.0.1:50021",
-    "speaker_id": 1,
     "speed": 1.0,
     "skip_history": True,
     "read_author": False,
     "read_super_chat": True,
     "max_length": 50,
     "dict_group": "デフォルト",
-    "use_ime": False
+    "use_ime": False,
+    "comment_opacity": 0.8,
+    "comment_bg_color": "#1e1e1e",
+    "comment_border_color": "#3c3c3c",
+    "check_updates": True,
+    "tts_engine": "voicevox",
+    "voicevox": {
+        "url": "http://127.0.0.1:50021",
+        "path": "",
+        "speaker_id": 1
+    },
+    "coeiroink": {
+        "url": "http://127.0.0.1:50032",
+        "path": "",
+        "speaker_id": 1
+    }
 }
 
 DEFAULT_WORD_LIST = [
@@ -568,10 +589,10 @@ class SpeechWorker(QThread):
     dict_add_requested = Signal(str, str)
     dict_del_requested = Signal(str)
 
-    def __init__(self, speech_queue: queue.Queue, voicevox_url: str, speaker_id: int, speed: float, word_list: list[dict] = None):
+    def __init__(self, speech_queue: queue.Queue, tts_engine: BaseTTSEngine, speaker_id: int, speed: float, word_list: list[dict] = None):
         super().__init__()
         self.speech_queue = speech_queue
-        self.voicevox_url = voicevox_url.rstrip("/")
+        self.tts_engine = tts_engine
         self.speaker_id = speaker_id
         self.speed = speed
         self.word_list = word_list if word_list is not None else []
@@ -660,34 +681,20 @@ class SpeechWorker(QThread):
             
             target_speaker = speaker_id if speaker_id is not None else self.speaker_id
             target_speed = speed if speed is not None else self.speed
-
-            query_response = requests.post(
-                f"{self.voicevox_url}/audio_query",
-                params={"text": text, "speaker": target_speaker},
-                timeout=10,
-            )
-            query_response.raise_for_status()
-            audio_query = query_response.json()
-            audio_query["speedScale"] = target_speed
-            
-            if pitch is not None:
-                audio_query["pitchScale"] = pitch
-                
-            audio_query["intonationScale"] = 1.05
-            
             target_volume = volume if volume is not None else 1.0
-            audio_query["volumeScale"] = target_volume
 
-            synthesis_response = requests.post(
-                f"{self.voicevox_url}/synthesis",
-                params={"speaker": target_speaker},
-                json=audio_query,
-                timeout=30,
+            content = self.tts_engine.synthesize_wav(
+                text=text,
+                speed=target_speed,
+                pitch=pitch,
+                volume=target_volume,
+                speaker_id=target_speaker
             )
-            synthesis_response.raise_for_status()
+            if not content:
+                raise RuntimeError("音声合成に失敗しました。")
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
-                fp.write(synthesis_response.content)
+                fp.write(content)
                 wav_path = fp.name
 
             # エフェクトおよび定位制御の適用

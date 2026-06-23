@@ -16,7 +16,7 @@ except ImportError:
 
 import requests
 import json
-from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl
+from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl, QByteArray
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,19 +33,23 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
 )
-from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap, QBrush, QColor, QFont, QPalette
+from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap, QBrush, QColor, QFont, QPalette, QDesktopServices
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 
 
-# core.workers から必要なものをインポート
 from core.workers import (
+    APP_VERSION,
     MAIN_UI_FILE,
     SETTINGS_UI_FILE,
     ICON_FILE,
     SETTINGS_ICON_FILE,
     PIP_ICON_FILE,
+    PIP_OFF_ICON_FILE,
+    PIP_ON_ICON_FILE,
+    TV_ICON_FILE,
+    APP_DIR,
     SpeechWorker,
     ChatStreamWorker,
     now_text,
@@ -56,6 +60,9 @@ from core.workers import (
 )
 from core.settings_dialog import SettingsDialog
 from core.comment_window import CommentWindow
+from core.tts_engines import BaseTTSEngine
+import core.tts_factory as tts_factory
+import core.dictionary as dictionary
 
 
 
@@ -76,7 +83,7 @@ class LiveVoiceBridgeApp(QObject):
         self.speech_queue: queue.Queue = queue.Queue()
         self.chat_worker: ChatStreamWorker | None = None
         self.speech_worker: SpeechWorker | None = None
-        self.voicevox_process: subprocess.Popen | None = None
+        self.tts_engine: BaseTTSEngine | None = None
         self.comment_window: CommentWindow | None = None
         self._comment_tab_layout = None
         self._comment_placeholder: QLabel | None = None
@@ -140,32 +147,12 @@ class LiveVoiceBridgeApp(QObject):
         self.popout_button: QToolButton = self.window.findChild(QToolButton, "popoutButton")
         self.settings_button: QToolButton = self.window.findChild(QToolButton, "settingsButton")
 
-        from PySide6.QtGui import QIcon, QPainter, QPalette, QPixmap
-        from PySide6.QtCore import QSize, QByteArray, Qt
-
-        def _load_svg_icon(svg_path, ref_widget) -> QIcon | None:
-            """SVG をテーマカラーに合わせて読み込む。失敗時は None を返す。"""
-            try:
-                with open(svg_path, "r", encoding="utf-8") as f:
-                    svg_content = f.read()
-                text_color = ref_widget.palette().color(QPalette.Text).name()
-                modified_svg = svg_content.replace("currentColor", text_color)
-                renderer = QSvgRenderer(QByteArray(modified_svg.encode("utf-8")))
-                pixmap = QPixmap(24, 24)
-                pixmap.fill(Qt.transparent)
-                painter = QPainter(pixmap)
-                renderer.render(painter)
-                painter.end()
-                return QIcon(pixmap)
-            except Exception:
-                return QIcon(str(svg_path))
-
         if SETTINGS_ICON_FILE.exists():
-            self.settings_button.setIcon(_load_svg_icon(SETTINGS_ICON_FILE, self.settings_button))
+            self.settings_button.setIcon(self._load_svg_icon(SETTINGS_ICON_FILE, self.settings_button))
             self.settings_button.setIconSize(QSize(24, 24))
 
         if PIP_ICON_FILE.exists() and self.popout_button is not None:
-            self.popout_button.setIcon(_load_svg_icon(PIP_ICON_FILE, self.popout_button))
+            self.popout_button.setIcon(self._load_svg_icon(PIP_ICON_FILE, self.popout_button))
             self.popout_button.setText("")
             self.popout_button.setIconSize(QSize(24, 24))
 
@@ -188,6 +175,70 @@ class LiveVoiceBridgeApp(QObject):
         if self.config.get("comment_popout", False):
             self.set_comment_popout(True)
 
+        if self.config.get("check_updates", True):
+            self.check_updates()
+
+    def check_updates(self) -> None:
+        self.append_log("アップデートを確認中...")
+        url = QUrl("https://api.github.com/repos/Ikumyon/LiveVoiceBridge/releases/latest")
+        request = QNetworkRequest(url)
+        request.setRawHeader(b"User-Agent", b"LiveVoiceBridge")
+        reply = self.network_manager.get(request)
+        reply.finished.connect(lambda: self.on_update_check_finished(reply))
+
+    def on_update_check_finished(self, reply: QNetworkReply) -> None:
+        if reply.error() == QNetworkReply.NoError:
+            try:
+                data = json.loads(reply.readAll().data().decode("utf-8"))
+                latest_version_str = data.get("tag_name", "")
+                if not latest_version_str:
+                    self.append_log("[情報] アップデートチェック：タグ名が空です。")
+                    return
+                
+                latest_clean = latest_version_str.lstrip("v").strip()
+                current_clean = APP_VERSION.lstrip("v").strip()
+                
+                def parse_ver(v_str: str) -> tuple[int, ...]:
+                    try:
+                        return tuple(map(int, v_str.split(".")))
+                    except ValueError:
+                        return (0,)
+                
+                if parse_ver(latest_clean) > parse_ver(current_clean):
+                    self.append_log(f"[情報] 新しいバージョン {latest_version_str} が利用可能です。")
+                    reply_btn = QMessageBox.question(
+                        self.window,
+                        "アップデート確認",
+                        f"新しいバージョン ({latest_version_str}) が利用可能です。\nダウンロードページを開きますか？",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply_btn == QMessageBox.StandardButton.Yes:
+                        QDesktopServices.openUrl(QUrl("https://github.com/Ikumyon/LiveVoiceBridge/releases"))
+                else:
+                    self.append_log("アプリは最新バージョンです。")
+            except Exception as e:
+                self.append_log(f"[警告] アップデート情報の解析に失敗しました: {e}")
+        else:
+            self.append_log(f"[警告] アップデート情報の取得に失敗しました: {reply.errorString()}")
+        reply.deleteLater()
+
+    def _load_svg_icon(self, svg_path, ref_widget) -> QIcon | None:
+        """SVG をテーマカラーに合わせて読み込む。失敗時は None を返す。"""
+        try:
+            with open(svg_path, "r", encoding="utf-8") as f:
+                svg_content = f.read()
+            text_color = ref_widget.palette().color(QPalette.Text).name()
+            modified_svg = svg_content.replace("currentColor", text_color)
+            renderer = QSvgRenderer(QByteArray(modified_svg.encode("utf-8")))
+            pixmap = QPixmap(24, 24)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+            return QIcon(pixmap)
+        except Exception:
+            return QIcon(str(svg_path))
+
     def load_config(self) -> None:
         try:
             if CONFIG_FILE.exists():
@@ -195,6 +246,9 @@ class LiveVoiceBridgeApp(QObject):
                     loaded = json.load(f)
                     self.config = DEFAULT_CONFIG.copy()
                     self.config.update(loaded)
+
+                    # 各エンジン固有のマイグレーションを実行
+                    tts_factory.migrate_all_configs(self.config, loaded)
             else:
                 self.config = DEFAULT_CONFIG.copy()
                 self.save_config()
@@ -220,54 +274,6 @@ class LiveVoiceBridgeApp(QObject):
         if self.popout_button is not None:
             self.popout_button.toggled.connect(self.set_comment_popout)
 
-    def create_placeholder_avatar(self, initial: str) -> QPixmap:
-        pixmap = QPixmap(36, 36)
-        pixmap.fill(Qt.transparent)
-        
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        palette = self.comment_list.palette()
-        bg_color = palette.color(QPalette.Link)
-        
-        painter.setBrush(QBrush(bg_color))
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(0, 0, 36, 36)
-        
-        painter.setPen(QColor(Qt.white))
-        font = QFont()
-        font.setBold(True)
-        font.setPointSize(14)
-        painter.setFont(font)
-        
-        painter.drawText(0, 0, 36, 36, Qt.AlignCenter, initial)
-        painter.end()
-        return pixmap
-
-    def clip_to_circle(self, pixmap: QPixmap, size: int) -> QPixmap:
-        target = QPixmap(size, size)
-        target.fill(Qt.transparent)
-        
-        painter = QPainter(target)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        
-        scaled_pixmap = pixmap.scaled(
-            size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
-        )
-        
-        x_offset = (scaled_pixmap.width() - size) // 2
-        y_offset = (scaled_pixmap.height() - size) // 2
-        cropped_pixmap = scaled_pixmap.copy(x_offset, y_offset, size, size)
-        
-        brush = QBrush(cropped_pixmap)
-        painter.setBrush(brush)
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(0, 0, size, size)
-        painter.end()
-        
-        return target
-
     def on_image_downloaded(self, reply: QNetworkReply) -> None:
         avatar_label = reply.property("avatar_label")
         if not avatar_label:
@@ -278,7 +284,7 @@ class LiveVoiceBridgeApp(QObject):
             data = reply.readAll()
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
-                clipped_pixmap = self.clip_to_circle(pixmap, 36)
+                clipped_pixmap = clip_to_circle(pixmap, 36)
                 avatar_label.setPixmap(clipped_pixmap)
         reply.deleteLater()
 
@@ -298,7 +304,7 @@ class LiveVoiceBridgeApp(QObject):
         avatar_label = QLabel()
         avatar_label.setFixedSize(36, 36)
         initial = author[0] if author else "Anonymous"[0]
-        placeholder_pixmap = self.create_placeholder_avatar(initial)
+        placeholder_pixmap = create_placeholder_avatar(initial, self.comment_list.palette())
         avatar_label.setPixmap(placeholder_pixmap)
         layout.addWidget(avatar_label)
         
@@ -323,7 +329,7 @@ class LiveVoiceBridgeApp(QObject):
         else:
             name_color = palette.color(QPalette.Link).name()
             name_text = author
-
+ 
         name_label = QLabel(name_text)
         name_label.setStyleSheet(f"color: {name_color}; font-weight: bold; font-size: 12px;")
         meta_layout.addWidget(name_label)
@@ -348,12 +354,12 @@ class LiveVoiceBridgeApp(QObject):
             request = QNetworkRequest(QUrl(profile_image_url))
             reply = self.network_manager.get(request)
             reply.setProperty("avatar_label", avatar_label)
-
+ 
         # SE再生コマンドの処理
         play_file = data.get("play_file")
         if play_file and not is_skip:
             self.play_sound_file(play_file)
-
+ 
     def play_sound_file(self, filename: str) -> None:
         if not self.player:
             self.append_log(f"[音声再生エラー] QMediaPlayerが初期化されていません。")
@@ -367,36 +373,16 @@ class LiveVoiceBridgeApp(QObject):
             self.append_log(f"[音声再生] {safe_name} を再生します。")
         else:
             self.append_log(f"[音声再生警告] {safe_name} が sounds ディレクトリに見つかりません。")
-
+ 
     def on_dict_add_requested(self, word: str, reading: str) -> None:
         try:
-            DICT_DIR.mkdir(parents=True, exist_ok=True)
-            dict_file = DICT_DIR / "配信コメント.json"
-            
-            if dict_file.exists():
-                with open(dict_file, "r", encoding="utf-8") as f:
-                    words = json.load(f)
-            else:
-                words = []
-                
-            # 重複防止：既に同じ単語があれば削除
-            words = [w for w in words if w.get("word") != word]
-            words.append({
-                "word": word,
-                "reading": reading,
-                "pos": "名詞",
-                "comment": "コメント追加"
-            })
-            
-            with open(dict_file, "w", encoding="utf-8") as f:
-                json.dump(words, f, ensure_ascii=False, indent=2)
-                
+            words = dictionary.add_word_to_group("配信コメント", word, reading, pos="名詞", comment="コメント追加")
             self.append_log(f"[辞書登録完了] 「{word}」を「{reading}」として登録しました（配信コメントグループ）。")
             
-            # メイン設定画面のメモリ上にある辞書辞書も更新
+            # メイン設定画面のメモリ上にある辞書も更新
             if hasattr(self, "word_dict") and isinstance(self.word_dict, dict):
                 self.word_dict["配信コメント"] = words
-
+ 
             # 全辞書データのロードと統合
             all_dict = self.load_all_word_dict_data()
             merged_list = []
@@ -408,34 +394,20 @@ class LiveVoiceBridgeApp(QObject):
                 
         except Exception as exc:
             self.append_log(f"[辞書登録エラー] 辞書の保存または反映に失敗しました: {exc}")
-
+ 
     def on_dict_del_requested(self, word: str) -> None:
         try:
-            DICT_DIR.mkdir(parents=True, exist_ok=True)
-            dict_file = DICT_DIR / "配信コメント.json"
-            
-            if dict_file.exists():
-                with open(dict_file, "r", encoding="utf-8") as f:
-                    words = json.load(f)
-            else:
-                words = []
-                
-            # 単語を削除
-            new_words = [w for w in words if w.get("word") != word]
-            
-            if len(new_words) == len(words):
+            new_words = dictionary.delete_word_from_group("配信コメント", word)
+            if new_words is None:
                 self.append_log(f"[辞書削除警告] 「{word}」は配信コメントグループに見つかりませんでした。")
                 return
-                
-            with open(dict_file, "w", encoding="utf-8") as f:
-                json.dump(new_words, f, ensure_ascii=False, indent=2)
                 
             self.append_log(f"[辞書削除完了] 「{word}」を辞書から削除しました（配信コメントグループ）。")
             
             # メイン設定画面のメモリ上にある辞書も更新
             if hasattr(self, "word_dict") and isinstance(self.word_dict, dict):
                 self.word_dict["配信コメント"] = new_words
-
+ 
             # 全辞書データのロードと統合
             all_dict = self.load_all_word_dict_data()
             merged_list = []
@@ -491,11 +463,47 @@ class LiveVoiceBridgeApp(QObject):
             self._comment_tab_layout.removeWidget(self.comment_list)
             self.comment_list.setParent(None)
 
-        # プレースホルダーを表示
-        self._comment_placeholder = QLabel("📺  別ウィンドウで表示中")
-        self._comment_placeholder.setAlignment(Qt.AlignCenter)
+        # プレースホルダーを表示 (tv.svg のグラフィック)
+        placeholder_widget = QWidget()
+        placeholder_layout = QVBoxLayout(placeholder_widget)
+        placeholder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon_label = QLabel()
+        icon_label.setFixedSize(64, 64)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        if TV_ICON_FILE.exists():
+            try:
+                with open(TV_ICON_FILE, "r", encoding="utf-8") as f:
+                    svg_content = f.read()
+                text_color = self.window.palette().color(QPalette.ColorRole.Text).name()
+                modified_svg = svg_content.replace("currentColor", text_color)
+                renderer = QSvgRenderer(QByteArray(modified_svg.encode("utf-8")))
+                pixmap = QPixmap(64, 64)
+                pixmap.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(pixmap)
+                renderer.render(painter)
+                painter.end()
+                icon_label.setPixmap(pixmap)
+            except Exception:
+                icon_label.setText("📺")
+        else:
+            icon_label.setText("📺")
+
+        text_label = QLabel("別ウィンドウで表示中")
+        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text_label.setStyleSheet("color: palette(text); font-size: 13px; font-weight: bold; margin-top: 10px;")
+
+        placeholder_layout.addWidget(icon_label)
+        placeholder_layout.addWidget(text_label)
+
+        self._comment_placeholder = placeholder_widget
         if self._comment_tab_layout is not None:
             self._comment_tab_layout.addWidget(self._comment_placeholder)
+
+        # PiPボタンのアイコンをオン（無印）状態に変更
+        if PIP_ON_ICON_FILE.exists() and self.popout_button is not None:
+            self.popout_button.setIcon(self._load_svg_icon(PIP_ON_ICON_FILE, self.popout_button))
 
         # PiPウィンドウを生成して QListWidget を渡す
         if self.comment_window is None:
@@ -537,6 +545,10 @@ class LiveVoiceBridgeApp(QObject):
             self._comment_tab_layout.addWidget(self.comment_list)
             self._comment_tab_layout = None
 
+        # PiPボタンのアイコンをオフ（2）状態に戻す
+        if PIP_OFF_ICON_FILE.exists() and self.popout_button is not None:
+            self.popout_button.setIcon(self._load_svg_icon(PIP_OFF_ICON_FILE, self.popout_button))
+
     def append_log(self, text: str) -> None:
         self.log_text.append(f"{now_text()}  {text}")
 
@@ -554,25 +566,10 @@ class LiveVoiceBridgeApp(QObject):
         QMessageBox.warning(self.window, "LiveVoiceBridge エラー", text)
 
     def load_all_word_dict_data(self) -> dict[str, list[dict]]:
-        data = {}
-        try:
-            if DICT_DIR.exists():
-                for json_file in DICT_DIR.glob("*.json"):
-                    group_name = json_file.stem
-                    try:
-                        with open(json_file, "r", encoding="utf-8") as f:
-                            data[group_name] = json.load(f)
-                    except Exception as e:
-                        print(f"辞書ファイル {json_file.name} のロード失敗: {e}")
-        except Exception as e:
-            print(f"辞書ディレクトリ走査失敗: {e}")
-        
-        if not data:
-            data["デフォルト"] = DEFAULT_WORD_LIST.copy()
-        return data
-
+        return dictionary.load_all_word_dict_data()
+ 
     def load_raw_word_dict_data(self) -> dict:
-        return self.load_all_word_dict_data()
+        return dictionary.load_all_word_dict_data()
 
     def open_settings_dialog(self) -> None:
         # ロールバック用に現在の設定をバックアップ
@@ -620,6 +617,12 @@ class LiveVoiceBridgeApp(QObject):
             self.speech_worker.speed = dialog.speed_spin.value()
             self.speech_worker.word_list = dialog.get_all_merged_word_list()
 
+        if self.comment_window is not None:
+            self.comment_window.opacity = dialog.opacity_slider.value() / 100.0
+            self.config["comment_bg_color"] = dialog.bg_color_hex
+            self.config["comment_border_color"] = dialog.border_color_hex
+            self.comment_window.update()
+
     def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
         # スレッドのパラメータをバックアップした元の値に復元
         if self.chat_worker is not None and self.chat_worker.isRunning():
@@ -629,7 +632,10 @@ class LiveVoiceBridgeApp(QObject):
             self.chat_worker.max_length = backup_config.get("max_length", 50)
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.speaker_id = int(backup_config.get("speaker_id", 1))
+            engine_type = backup_config.get("tts_engine", "voicevox")
+            engine_config = backup_config.get(engine_type, {})
+            speaker_id = int(engine_config.get("speaker_id", 1))
+            self.speech_worker.speaker_id = speaker_id
             self.speech_worker.speed = float(backup_config.get("speed", 1.0))
             # 全グループの単語をマージして適用
             merged_list = []
@@ -637,65 +643,62 @@ class LiveVoiceBridgeApp(QObject):
                 merged_list.extend(words)
             self.speech_worker.word_list = merged_list
 
-    def ensure_voicevox_running_with_path(self, url: str, path: str) -> bool:
+        if self.comment_window is not None:
+            self.comment_window.opacity = backup_config.get("comment_opacity", 0.8)
+            self.config["comment_bg_color"] = backup_config.get("comment_bg_color", "#1e1e1e")
+            self.config["comment_border_color"] = backup_config.get("comment_border_color", "#3c3c3c")
+            self.comment_window.update()
+
+    def ensure_tts_running(self, url: str, path: str, engine_type: str | None = None) -> bool:
         if not url:
             return False
 
-        # 既に起動しているか確認
-        try:
-            response = requests.get(f"{url}/speakers", timeout=1)
-            if response.status_code == 200:
-                return True
-        except requests.RequestException:
-            pass
+        if engine_type is None:
+            engine_type = self.config.get("tts_engine", "voicevox")
 
-        # 起動していない場合、パスが指定されていれば起動を試みる
+        engine_type = engine_type.lower()
+
+        # 現在の tts_engine が存在し、型が一致していればそれを使う。
+        # 異なるエンジンまたは別URLの場合は、古いエンジンプロセスを終了させる
+        if self.tts_engine is not None:
+            current_class = self.tts_engine.__class__
+            target_class = tts_factory.get_engine_class(engine_type)
+            if current_class != target_class or self.tts_engine.url != url:
+                self.tts_engine.terminate()
+                self.tts_engine = None
+ 
+        if self.tts_engine is None:
+            self.tts_engine = tts_factory.get_engine_instance(engine_type, url, path)
+
+        if self.tts_engine.is_running():
+            return True
+
         if not path or not os.path.exists(path):
             return False
 
-        self.set_status("VOICEVOXを起動中...")
+        engine_display_name = "COEIROINK" if engine_type == "coeiroink" else "VOICEVOX"
+        self.set_status(f"{engine_display_name}を起動中...")
         QApplication.processEvents()
 
-        try:
-            creationflags = 0
-            if platform.system() == "Windows":
-                creationflags = 0x08000000  # CREATE_NO_WINDOW
-            
-            self.voicevox_process = subprocess.Popen(
-                [path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creationflags
-            )
-        except Exception as exc:
-            self.show_error(f"VOICEVOXの起動に失敗しました: {exc}")
+        success = self.tts_engine.ensure_running()
+        if success:
+            self.set_status(f"{engine_display_name}の起動を確認しました。")
+            return True
+        else:
+            self.show_error(f"{engine_display_name}の起動を確認できませんでした。手動で起動してください。")
             return False
-
-        # 起動を待つ（最大20秒）
-        for _ in range(20):
-            if self.voicevox_process.poll() is not None:
-                self.show_error("VOICEVOXプロセスが起動直後に終了しました。")
-                self.voicevox_process = None
-                return False
-
-            try:
-                response = requests.get(f"{url}/speakers", timeout=1)
-                if response.status_code == 200:
-                    self.set_status("VOICEVOXの起動を確認しました。")
-                    return True
-            except requests.RequestException:
-                pass
-            time.sleep(1)
-            QApplication.processEvents()
-
-        self.show_error("VOICEVOXの起動を確認できませんでした。手動で起動してください。")
-        return False
 
     def start(self) -> None:
         url_or_id = self.url_line.text().strip()
         api_key = self.config.get("youtube_api_key", "")
-        voicevox_url = self.config.get("voicevox_url", "http://127.0.0.1:50021")
-        voicevox_path = self.config.get("voicevox_path", "")
+
+        engine_type = self.config.get("tts_engine", "voicevox")
+        engine_config = self.config.get(engine_type, {})
+        
+        engine_class = tts_factory.get_engine_class(engine_type)
+        tts_url = engine_config.get("url", engine_class.DEFAULT_URL)
+        tts_path = engine_config.get("path", "")
+        speaker_id = int(engine_config.get("speaker_id", 1))
 
         if not url_or_id:
             QMessageBox.warning(self.window, "入力不足", "YouTube URLまたはVideo IDを入力してください。")
@@ -708,8 +711,8 @@ class LiveVoiceBridgeApp(QObject):
         self.config["youtube_url"] = url_or_id
         self.save_config()
 
-        # VOICEVOXの自動起動
-        self.ensure_voicevox_running_with_path(voicevox_url, voicevox_path)
+        # 音声合成エンジンの自動起動
+        self.ensure_tts_running(tts_url, tts_path, engine_type)
 
         # すべての辞書ファイルの読み込み・統合
         word_list = []
@@ -723,8 +726,8 @@ class LiveVoiceBridgeApp(QObject):
         self.speech_queue = queue.Queue()
         self.speech_worker = SpeechWorker(
             speech_queue=self.speech_queue,
-            voicevox_url=voicevox_url,
-            speaker_id=int(self.config.get("speaker_id", 1)),
+            tts_engine=self.tts_engine,
+            speaker_id=speaker_id,
             speed=float(self.config.get("speed", 1.0)),
             word_list=word_list,
         )
@@ -768,17 +771,11 @@ class LiveVoiceBridgeApp(QObject):
                 self.speech_worker.wait()
             self.speech_worker = None
 
-        # 自動起動したVOICEVOXプロセスがあれば終了
-        if getattr(self, "voicevox_process", None) is not None:
-            if self.voicevox_process.poll() is None:
-                self.set_status("VOICEVOXを終了中...")
-                QApplication.processEvents()
-                self.voicevox_process.terminate()
-                try:
-                    self.voicevox_process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.voicevox_process.kill()
-            self.voicevox_process = None
+        # 自動起動したTTSプロセスがあれば終了
+        if self.tts_engine is not None:
+            self.set_status("音声合成エンジンを終了中...")
+            QApplication.processEvents()
+            self.tts_engine.terminate()
 
         self.status_label.setText("停止中")
         self.set_running_ui(False)
@@ -815,3 +812,56 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+ 
+ 
+# ------------------------------------------------------------------
+# UI・グラフィック関連ヘルパー関数（クラス外抽出）
+# ------------------------------------------------------------------
+def create_placeholder_avatar(initial: str, palette: QPalette) -> QPixmap:
+    """アバター未設定時のイニシャル入り丸形プレースホルダー画像を生成する。"""
+    pixmap = QPixmap(36, 36)
+    pixmap.fill(Qt.transparent)
+    
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    
+    bg_color = palette.color(QPalette.Link)
+    
+    painter.setBrush(QBrush(bg_color))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(0, 0, 36, 36)
+    
+    painter.setPen(QColor(Qt.white))
+    font = QFont()
+    font.setBold(True)
+    font.setPointSize(14)
+    painter.setFont(font)
+    
+    painter.drawText(0, 0, 36, 36, Qt.AlignCenter, initial)
+    painter.end()
+    return pixmap
+ 
+def clip_to_circle(pixmap: QPixmap, size: int) -> QPixmap:
+    """与えられた Pixmap を丸形にクリップ（トリミング）する。"""
+    target = QPixmap(size, size)
+    target.fill(Qt.transparent)
+    
+    painter = QPainter(target)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform)
+    
+    scaled_pixmap = pixmap.scaled(
+        size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+    )
+    
+    x_offset = (scaled_pixmap.width() - size) // 2
+    y_offset = (scaled_pixmap.height() - size) // 2
+    cropped_pixmap = scaled_pixmap.copy(x_offset, y_offset, size, size)
+    
+    brush = QBrush(cropped_pixmap)
+    painter.setBrush(brush)
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(0, 0, size, size)
+    painter.end()
+    
+    return target

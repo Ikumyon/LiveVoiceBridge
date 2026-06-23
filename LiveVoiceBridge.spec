@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('ui', 'ui'), ('assets', 'assets'), ('core/stream_list.proto', 'core')],
+    datas=[('ui', 'ui'), ('assets', 'assets'), ('core/stream_list.proto', 'core')] + collect_data_files('pykakasi'),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -19,8 +19,10 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='LiveVoiceBridge',
     debug=False,
     bootloader_ignore_signals=False,
@@ -33,12 +35,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='LiveVoiceBridge',
-)
+

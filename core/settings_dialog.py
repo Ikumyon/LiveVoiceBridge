@@ -4,8 +4,8 @@ import os
 import platform
 import requests
 
-from PySide6.QtCore import QFile, QObject, QRegularExpression, Signal
-from PySide6.QtGui import QAction, QRegularExpressionValidator
+from PySide6.QtCore import QFile, QObject, QRegularExpression, Signal, Qt
+from PySide6.QtGui import QAction, QRegularExpressionValidator, QColor
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -24,6 +24,11 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QInputDialog,
+    QHBoxLayout,
+    QGroupBox,
+    QSlider,
+    QLabel,
+    QColorDialog,
 )
 import json
 from pykakasi import kakasi
@@ -37,6 +42,10 @@ from core.workers import SETTINGS_UI_FILE, DICT_DIR, DEFAULT_WORD_LIST
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from main import LiveVoiceBridgeApp
+    from core.tts_engines import BaseTTSEngine
+ 
+import core.dictionary as dictionary
+import core.tts_factory as tts_factory
 
 
 def get_speaker_group(name: str) -> str:
@@ -119,16 +128,17 @@ class SettingsDialog(QObject):
 
         # ウィジェットのバインド
         self.api_key_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "apiKeyLineEdit")
-        self.voicevox_url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "voicevoxUrlLineEdit")
+        self.tts_url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "ttsUrlLineEdit")
         self.speaker_button: QPushButton = self.dialog_window.findChild(QPushButton, "speakerButton")
         self.max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "maxLengthSpinBox")
         self.speed_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "speedDoubleSpinBox")
         self.skip_history_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "skipHistoryCheckBox")
         self.read_author_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readAuthorCheckBox")
         self.read_super_chat_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readSuperChatCheckBox")
-        self.voicevox_path_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "voicevoxPathLineEdit")
-        self.voicevox_path_browse_button: QPushButton = self.dialog_window.findChild(QPushButton, "voicevoxPathBrowseButton")
-        self.test_voicevox_button: QPushButton = self.dialog_window.findChild(QPushButton, "testVoicevoxButton")
+        self.check_updates_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "checkUpdatesCheckBox")
+        self.tts_path_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "ttsPathLineEdit")
+        self.tts_path_browse_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsPathBrowseButton")
+        self.tts_test_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsTestButton")
         self.button_box: QDialogButtonBox = self.dialog_window.findChild(QDialogButtonBox, "buttonBox")
 
         # 読み替え辞書UIのバインド
@@ -164,24 +174,69 @@ class SettingsDialog(QObject):
         self.max_length_spin.setSpecialValueText("無制限")
         self.max_length_spin.setMaximum(1000)
 
+        # UIからPiP設定ウィジェットを取得
+        self.opacity_slider: QSlider = self.dialog_window.findChild(QSlider, "opacitySlider")
+        self.opacity_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "opacitySpinBox")
+        self.bg_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "bgColorButton")
+        self.border_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "borderColorButton")
+
+        # 音声エンジン選択のバインド
+        self.tts_engine_combo: QComboBox = self.dialog_window.findChild(QComboBox, "ttsEngineComboBox")
+
+        # 各エンジン用の一時設定バッファ
+        self.engine_settings = {
+            "voicevox": {"url": "http://127.0.0.1:50021", "path": "", "speaker_id": 1},
+            "coeiroink": {"url": "http://127.0.0.1:50032", "path": "", "speaker_id": 1}
+        }
+        self.current_active_engine = "voicevox"
+
+        # カラー値の保持
+        self.bg_color_hex = ""
+        self.border_color_hex = ""
+
         self.load_settings()
         self.connect_signals()
 
     def load_settings(self) -> None:
         env_key = os.environ.get("YOUTUBE_API_KEY", "")
         self.api_key_line.setText(self.main_app.config.get("youtube_api_key", env_key))
-        self.voicevox_url_line.setText(self.main_app.config.get("voicevox_url", "http://127.0.0.1:50021"))
-        self.voicevox_path_line.setText(self.main_app.config.get("voicevox_path", ""))
+
+        # 設定から各エンジン固有のパラメータをロード（旧キーからの移行も兼ねる）
+        self.current_active_engine = self.main_app.config.get("tts_engine", "voicevox").lower()
+
+        # VOICEVOX設定の読み込み
+        vv_config = self.main_app.config.get("voicevox", {})
+        self.engine_settings["voicevox"]["url"] = vv_config.get("url", "http://127.0.0.1:50021")
+        self.engine_settings["voicevox"]["path"] = vv_config.get("path", "")
+        self.engine_settings["voicevox"]["speaker_id"] = int(vv_config.get("speaker_id", 1))
+
+        # COEIROINK設定の読み込み
+        coe_config = self.main_app.config.get("coeiroink", {})
+        self.engine_settings["coeiroink"]["url"] = coe_config.get("url", "http://127.0.0.1:50032")
+        self.engine_settings["coeiroink"]["path"] = coe_config.get("path", "")
+        self.engine_settings["coeiroink"]["speaker_id"] = int(coe_config.get("speaker_id", 1))
+
+        # 画面のコントロールへ現在アクティブなエンジンの設定値を適用
+        active_config = self.engine_settings[self.current_active_engine]
+        self.tts_url_line.setText(active_config["url"])
+        self.tts_path_line.setText(active_config["path"])
         
-        speaker_id = int(self.main_app.config.get("speaker_id", 1))
-        self.set_speaker_button_id(speaker_id)
-        self.update_speakers_from_voicevox()
+        self.current_speaker_id = active_config["speaker_id"]
+        self.set_speaker_button_id(self.current_speaker_id)
+        self.update_speakers_from_engine()
 
         self.max_length_spin.setValue(int(self.main_app.config.get("max_length", 50)))
         self.speed_spin.setValue(float(self.main_app.config.get("speed", 1.0)))
+        
+        # 音声エンジンの選択状態を復元
+        idx = self.tts_engine_combo.findText(self.current_active_engine.upper())
+        if idx >= 0:
+            self.tts_engine_combo.setCurrentIndex(idx)
+
         self.skip_history_check.setChecked(bool(self.main_app.config.get("skip_history", True)))
         self.read_author_check.setChecked(bool(self.main_app.config.get("read_author", False)))
         self.read_super_chat_check.setChecked(bool(self.main_app.config.get("read_super_chat", True)))
+        self.check_updates_check.setChecked(bool(self.main_app.config.get("check_updates", True)))
 
         # 読み替え辞書のロード
         self.word_dict = self.main_app.load_all_word_dict_data()
@@ -202,16 +257,35 @@ class SettingsDialog(QObject):
 
         self.display_words_for_group()
 
+        opacity = int(self.main_app.config.get("comment_opacity", 0.8) * 100)
+        self.opacity_slider.setValue(opacity)
+        self.opacity_spin.setValue(opacity)
+
+        self.bg_color_hex = self.main_app.config.get("comment_bg_color", "#1e1e1e")
+        self.border_color_hex = self.main_app.config.get("comment_border_color", "#3c3c3c")
+        self.update_color_button_style(self.bg_color_button, self.bg_color_hex)
+        self.update_color_button_style(self.border_color_button, self.border_color_hex)
+
     def save_settings(self) -> None:
         self.main_app.config["youtube_api_key"] = self.api_key_line.text().strip()
-        self.main_app.config["voicevox_url"] = self.voicevox_url_line.text().strip()
-        self.main_app.config["voicevox_path"] = self.voicevox_path_line.text().strip()
-        self.main_app.config["speaker_id"] = self.get_current_speaker_id()
+
+        # 現在画面に入力されている内容を、現在アクティブなエンジンのバッファへ退避
+        self.engine_settings[self.current_active_engine] = {
+            "url": self.tts_url_line.text().strip(),
+            "path": self.tts_path_line.text().strip(),
+            "speaker_id": self.get_current_speaker_id()
+        }
+
+        # 各エンジンのネストされた設定値を config に保存
+        self.main_app.config["voicevox"] = self.engine_settings["voicevox"]
+        self.main_app.config["coeiroink"] = self.engine_settings["coeiroink"]
+
         self.main_app.config["max_length"] = self.max_length_spin.value()
         self.main_app.config["speed"] = self.speed_spin.value()
         self.main_app.config["skip_history"] = self.skip_history_check.isChecked()
         self.main_app.config["read_author"] = self.read_author_check.isChecked()
         self.main_app.config["read_super_chat"] = self.read_super_chat_check.isChecked()
+        self.main_app.config["check_updates"] = self.check_updates_check.isChecked()
 
         # 読み替え辞書のセーブ
         if self.current_active_group_name:
@@ -221,29 +295,20 @@ class SettingsDialog(QObject):
         if active_group:
             self.main_app.config["dict_group"] = active_group
 
+        self.main_app.config["comment_opacity"] = self.opacity_slider.value() / 100.0
+        self.main_app.config["comment_bg_color"] = self.bg_color_hex
+        self.main_app.config["comment_border_color"] = self.border_color_hex
+        self.main_app.config["tts_engine"] = self.tts_engine_combo.currentText().lower()
         self.main_app.save_config()
 
         try:
-            DICT_DIR.mkdir(parents=True, exist_ok=True)
-            # 現在のメモリ上のグループを個別のJSONファイルに書き出す
-            for group_name, words in self.word_dict.items():
-                dest_file = DICT_DIR / f"{group_name}.json"
-                with open(dest_file, "w", encoding="utf-8") as f:
-                    json.dump(words, f, ensure_ascii=False, indent=2)
-            
-            # メモリ上にない（＝削除された）辞書ファイルを物理削除
-            for json_file in DICT_DIR.glob("*.json"):
-                if json_file.stem not in self.word_dict:
-                    try:
-                        json_file.unlink()
-                    except Exception:
-                        pass
+            dictionary.save_word_dict_data(self.word_dict)
         except Exception as exc:
             QMessageBox.critical(self.dialog_window, "エラー", f"辞書ファイルの保存に失敗しました: {exc}")
 
     def connect_signals(self) -> None:
-        self.voicevox_path_browse_button.clicked.connect(self.browse_voicevox_path)
-        self.test_voicevox_button.clicked.connect(self.test_voicevox)
+        self.tts_path_browse_button.clicked.connect(self.browse_tts_path)
+        self.tts_test_button.clicked.connect(self.test_tts_connection)
 
         # OK / キャンセルボタン
         self.button_box.accepted.connect(self.accept_settings)
@@ -253,6 +318,7 @@ class SettingsDialog(QObject):
         self.skip_history_check.stateChanged.connect(lambda _: self.settings_changed.emit())
         self.read_author_check.stateChanged.connect(lambda _: self.settings_changed.emit())
         self.read_super_chat_check.stateChanged.connect(lambda _: self.settings_changed.emit())
+        self.check_updates_check.stateChanged.connect(lambda _: self.settings_changed.emit())
         self.speed_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         self.max_length_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
 
@@ -265,22 +331,79 @@ class SettingsDialog(QObject):
         self.delete_group_button.clicked.connect(self.delete_dictionary_group)
         self.group_combo.currentTextChanged.connect(self.on_group_changed)
         self.word_table.itemChanged.connect(lambda _: self.settings_changed.emit())
+        self.opacity_slider.valueChanged.connect(self.opacity_spin.setValue)
+        self.opacity_spin.valueChanged.connect(self.opacity_slider.setValue)
+        self.opacity_slider.valueChanged.connect(self.on_opacity_slider_changed)
+        self.bg_color_button.clicked.connect(self.select_bg_color)
+        self.border_color_button.clicked.connect(self.select_border_color)
+        self.tts_engine_combo.currentTextChanged.connect(self.on_tts_engine_changed)
+
+    def on_tts_engine_changed(self, engine_name: str) -> None:
+        new_engine = engine_name.lower()
+        if new_engine == self.current_active_engine:
+            return
+
+        # 1. 現在画面に表示されている設定を、現在のアクティブエンジン（旧エンジン）のバッファへ退避
+        self.engine_settings[self.current_active_engine] = {
+            "url": self.tts_url_line.text().strip(),
+            "path": self.tts_path_line.text().strip(),
+            "speaker_id": self.get_current_speaker_id()
+        }
+
+        # 2. 現在アクティブなエンジンを新しいものに更新
+        self.current_active_engine = new_engine
+
+        # 3. 新しいエンジンのパラメータを画面へロードする
+        active_config = self.engine_settings[new_engine]
+        self.tts_url_line.setText(active_config["url"])
+        self.tts_path_line.setText(active_config["path"])
+        
+        self.current_speaker_id = active_config["speaker_id"]
+        self.set_speaker_button_id(self.current_speaker_id)
+        
+        # 新しいエンジンのURL/パスを基に、話者リストを自動で更新・メニュー構築する
+        self.update_speakers_from_engine()
+
+        self.settings_changed.emit()
+
+    def on_opacity_slider_changed(self, value: int) -> None:
+        self.settings_changed.emit()
+
+    def select_bg_color(self) -> None:
+        color = QColorDialog.getColor(QColor(self.bg_color_hex), self.dialog_window, "背景色を選択")
+        if color.isValid():
+            self.bg_color_hex = color.name()
+            self.update_color_button_style(self.bg_color_button, self.bg_color_hex)
+            self.settings_changed.emit()
+
+    def select_border_color(self) -> None:
+        color = QColorDialog.getColor(QColor(self.border_color_hex), self.dialog_window, "縁色を選択")
+        if color.isValid():
+            self.border_color_hex = color.name()
+            self.update_color_button_style(self.border_color_button, self.border_color_hex)
+            self.settings_changed.emit()
+
+    def update_color_button_style(self, button: QPushButton, hex_color: str) -> None:
+        color = QColor(hex_color)
+        luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255.0
+        text_color = "#000000" if luminance > 0.5 else "#ffffff"
+        button.setStyleSheet(f"background-color: {hex_color}; color: {text_color}; border: 1px solid #555555; font-weight: bold;")
 
     def accept_settings(self) -> None:
         self.save_settings()
         self.dialog_window.accept()
 
-    def browse_voicevox_path(self) -> None:
+    def browse_tts_path(self) -> None:
         system = platform.system()
         filter_str = "Executable Files (*.exe);;All Files (*)" if system == "Windows" else "All Files (*)"
         file_path, _ = QFileDialog.getOpenFileName(
             self.dialog_window,
-            "VOICEVOX 実行ファイルを選択",
-            self.voicevox_path_line.text().strip(),
+            "音声合成エンジン実行ファイルを選択",
+            self.tts_path_line.text().strip(),
             filter_str
         )
         if file_path:
-            self.voicevox_path_line.setText(file_path)
+            self.tts_path_line.setText(file_path)
 
     def rebuild_speaker_menu(self) -> None:
         self.speaker_menu.clear()
@@ -348,14 +471,18 @@ class SettingsDialog(QObject):
         if not found:
             self.speaker_button.setText(f"カスタム (ID: {speaker_id})")
 
-    def update_speakers_from_voicevox(self) -> bool:
-        url = self.voicevox_url_line.text().strip().rstrip("/")
+    def get_engine_instance(self, url: str, exe_path: str) -> BaseTTSEngine:
+        engine_type = self.tts_engine_combo.currentText().lower()
+        return tts_factory.get_engine_instance(engine_type, url, exe_path)
+
+    def update_speakers_from_engine(self) -> bool:
+        url = self.tts_url_line.text().strip().rstrip("/")
         if not url:
             return False
         try:
-            response = requests.get(f"{url}/speakers", timeout=2)
-            if response.status_code == 200:
-                speakers = response.json()
+            engine = self.get_engine_instance(url, "")
+            speakers = engine.get_speakers()
+            if speakers:
                 new_data = {}
                 for sp in speakers:
                     name = sp.get("name", "")
@@ -373,26 +500,26 @@ class SettingsDialog(QObject):
                     self.set_speaker_button_id(self.current_speaker_id)
                     return True
         except Exception as exc:
-            self.main_app.append_log(f"[情報] VOICEVOXからの話者リスト取得スキップ: {exc}")
+            self.main_app.append_log(f"[情報] 話者リスト取得スキップ: {exc}")
         return False
 
-    def test_voicevox(self) -> None:
-        url = self.voicevox_url_line.text().strip().rstrip("/")
+    def test_tts_connection(self) -> None:
+        url = self.tts_url_line.text().strip().rstrip("/")
         if not url:
-            QMessageBox.warning(self.dialog_window, "入力不足", "VOICEVOX URLを入力してください。")
+            QMessageBox.warning(self.dialog_window, "入力不足", "接続URLを入力してください。")
             return
 
-        # VOICEVOX起動確認
-        self.main_app.ensure_voicevox_running_with_path(
-            url, self.voicevox_path_line.text().strip()
+        engine_type = self.tts_engine_combo.currentText().lower()
+        self.main_app.ensure_tts_running(
+            url, self.tts_path_line.text().strip(), engine_type
         )
 
         try:
-            response = requests.get(f"{url}/speakers", timeout=5)
-            response.raise_for_status()
-            speakers = response.json()
+            engine = self.get_engine_instance(url, "")
+            speakers = engine.get_speakers()
+            if not speakers:
+                raise RuntimeError("話者情報が取得できませんでした。")
 
-            # 動的に話者リストを更新
             new_data = {}
             for sp in speakers:
                 name = sp.get("name", "")
@@ -408,7 +535,7 @@ class SettingsDialog(QObject):
                 self.speakers_data = new_data
                 self.rebuild_speaker_menu()
                 self.set_speaker_button_id(self.current_speaker_id)
-                self.main_app.append_log("話者リストをVOICEVOXから更新しました。")
+                self.main_app.append_log("話者リストを更新しました。")
 
             lines: list[str] = []
             for speaker in speakers[:8]:
@@ -416,10 +543,10 @@ class SettingsDialog(QObject):
                 styles = speaker.get("styles", [])
                 style_text = ", ".join(f"{s.get('name')}={s.get('id')}" for s in styles[:6])
                 lines.append(f"{name}: {style_text}")
-            self.main_app.append_log("VOICEVOX接続OK")
+            self.main_app.append_log("接続OK")
             self.main_app.append_log(" / ".join(lines) if lines else "speaker情報なし")
         except Exception as exc:
-            self.main_app.show_error(f"VOICEVOXに接続できません: {exc}")
+            self.main_app.show_error(f"接続に失敗しました: {exc}")
 
     def on_group_changed(self, new_group_name: str) -> None:
         if self._block_group_change_signal:

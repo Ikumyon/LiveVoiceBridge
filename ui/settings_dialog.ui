@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>620</width>
-    <height>500</height>
+    <height>599</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -63,54 +63,75 @@
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="voicevoxGroupBox">
+        <widget class="QGroupBox" name="ttsGroupBox">
          <property name="title">
-          <string>TTS / VOICEVOX</string>
+          <string>音声合成 (TTS) 設定</string>
          </property>
-         <layout class="QGridLayout" name="voicevoxGridLayout">
+         <layout class="QGridLayout" name="ttsGridLayout">
           <item row="0" column="0">
-           <widget class="QLabel" name="voicevoxUrlLabel">
+           <widget class="QLabel" name="ttsEngineLabel">
             <property name="text">
-             <string>VOICEVOX URL</string>
+             <string>音声エンジン:</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="1">
-           <widget class="QLineEdit" name="voicevoxUrlLineEdit">
+          <item row="0" column="1" colspan="2">
+           <widget class="QComboBox" name="ttsEngineComboBox">
+            <item>
+             <property name="text">
+              <string>VOICEVOX</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>COEIROINK</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="ttsUrlLabel">
+            <property name="text">
+             <string>接続URL:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="ttsUrlLineEdit">
             <property name="text">
              <string>http://127.0.0.1:50021</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="2">
+          <item row="1" column="2">
            <widget class="QLabel" name="speakerLabel">
             <property name="text">
-             <string>スピーカー</string>
+             <string>スピーカー:</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="3">
+          <item row="1" column="3">
            <widget class="QPushButton" name="speakerButton">
             <property name="text">
              <string/>
             </property>
            </widget>
           </item>
-          <item row="0" column="4">
-           <widget class="QPushButton" name="testVoicevoxButton">
+          <item row="1" column="4">
+           <widget class="QPushButton" name="ttsTestButton">
             <property name="text">
-             <string>VOICEVOX確認</string>
+             <string>接続確認</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="0">
+          <item row="2" column="0">
            <widget class="QLabel" name="maxLengthLabel">
             <property name="text">
-             <string>最大文字数</string>
+             <string>最大文字数:</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="1">
+          <item row="2" column="1">
            <widget class="QSpinBox" name="maxLengthSpinBox">
             <property name="minimum">
              <number>20</number>
@@ -123,14 +144,14 @@
             </property>
            </widget>
           </item>
-          <item row="1" column="2">
+          <item row="2" column="2">
            <widget class="QLabel" name="speedLabel">
             <property name="text">
-             <string>速度</string>
+             <string>速度:</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="3">
+          <item row="2" column="3">
            <widget class="QDoubleSpinBox" name="speedDoubleSpinBox">
             <property name="minimum">
              <double>0.500000000000000</double>
@@ -146,22 +167,22 @@
             </property>
            </widget>
           </item>
-          <item row="2" column="0">
-           <widget class="QLabel" name="voicevoxPathLabel">
+          <item row="3" column="0">
+           <widget class="QLabel" name="ttsPathLabel">
             <property name="text">
-             <string>VOICEVOX パス</string>
+             <string>実行ファイルパス:</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="1" colspan="3">
-           <widget class="QLineEdit" name="voicevoxPathLineEdit">
+          <item row="3" column="1" colspan="3">
+           <widget class="QLineEdit" name="ttsPathLineEdit">
             <property name="placeholderText">
-             <string>VOICEVOXの実行ファイル（.exe等）のパス</string>
+             <string>音声合成エンジンの実行ファイル（.exe等）のパス</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="4">
-           <widget class="QPushButton" name="voicevoxPathBrowseButton">
+          <item row="3" column="4">
+           <widget class="QPushButton" name="ttsPathBrowseButton">
             <property name="text">
              <string>参照...</string>
             </property>
@@ -204,6 +225,16 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="checkUpdatesCheckBox">
+            <property name="text">
+             <string>起動時にアップデートを確認する</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <spacer name="optionsSpacer">
             <property name="orientation">
              <enum>Qt::Orientation::Horizontal</enum>
@@ -218,6 +249,95 @@
           </item>
          </layout>
         </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="pipGroupBox">
+         <property name="title">
+          <string>ポップアップ (PiP) 設定</string>
+         </property>
+         <layout class="QGridLayout" name="pipGridLayout">
+          <item row="0" column="0">
+           <widget class="QLabel" name="opacityLabel">
+            <property name="text">
+             <string>背景不透明度:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QSlider" name="opacitySlider">
+            <property name="minimum">
+             <number>10</number>
+            </property>
+            <property name="maximum">
+             <number>100</number>
+            </property>
+            <property name="value">
+             <number>80</number>
+            </property>
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="2">
+           <widget class="QSpinBox" name="opacitySpinBox">
+            <property name="suffix">
+             <string>%</string>
+            </property>
+            <property name="minimum">
+             <number>10</number>
+            </property>
+            <property name="maximum">
+             <number>100</number>
+            </property>
+            <property name="value">
+             <number>80</number>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="bgColorLabel">
+            <property name="text">
+             <string>背景色:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1" colspan="2">
+           <widget class="QPushButton" name="bgColorButton">
+            <property name="text">
+             <string>色を選択</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="borderColorLabel">
+            <property name="text">
+             <string>縁色:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1" colspan="2">
+           <widget class="QPushButton" name="borderColorButton">
+            <property name="text">
+             <string>色を選択</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
        </item>
       </layout>
      </widget>
