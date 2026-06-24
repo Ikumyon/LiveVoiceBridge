@@ -7,6 +7,9 @@ from abc import ABC, abstractmethod
 
 class BaseTTSEngine(ABC):
     DEFAULT_URL = ""
+    DISPLAY_NAME = "TTS"
+    REQUIRES_URL = True
+    IS_LOCAL_ENGINE = False
 
     @classmethod
     def migrate_config(cls, config: dict, loaded_config: dict) -> None:
@@ -60,6 +63,8 @@ class BaseTTSEngine(ABC):
         return False
 
     def is_running(self) -> bool:
+        if not self.REQUIRES_URL:
+            return True
         try:
             response = requests.get(f"{self.url}/speakers", timeout=1)
             if response.status_code == 200:

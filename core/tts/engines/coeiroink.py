@@ -6,6 +6,7 @@ class CoeiroinkEngine(BaseTTSEngine):
     
     COEIROINK v2 (HTTP API) は VOICEVOX と互換性のあるエンドポイントを持ちます。
     """
+    DISPLAY_NAME = "COEIROINK"
     DEFAULT_URL = "http://127.0.0.1:50032"
 
     @classmethod

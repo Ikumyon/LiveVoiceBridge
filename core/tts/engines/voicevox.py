@@ -3,6 +3,7 @@ from core.tts.base import BaseTTSEngine
 
 class VoicevoxEngine(BaseTTSEngine):
     """VOICEVOX 用の音声合成エンジン。"""
+    DISPLAY_NAME = "VOICEVOX"
     DEFAULT_URL = "http://127.0.0.1:50021"
 
     @classmethod

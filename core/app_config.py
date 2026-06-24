@@ -64,6 +64,20 @@ DEFAULT_CONFIG = {
         "path": "",
         "speaker_id": 0,
     },
+    "sherpa_supertonic": {
+        "url": "local://sherpa-supertonic",
+        "path": "models/sherpa-onnx-supertonic-3-ja-int8",
+        "speaker_id": 0,
+        "sample_rate": 24000,
+        "speed": 1.0,
+        "num_steps": 8,
+        "num_threads": 2,
+        "fallback_engine": "pyopenjtalk",
+        "enable_fallback": True,
+        "device_policy": "auto",
+        "device_priority": ["NPU", "GPU", "CPU"],
+        "backend": "sherpa_onnx"
+    },
     "read_blocks": [
         {"type": "message"},
     ],

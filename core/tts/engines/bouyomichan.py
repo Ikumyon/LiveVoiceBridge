@@ -6,6 +6,7 @@ from core.tts.base import BaseTTSEngine
 
 class BouyomiChanEngine(BaseTTSEngine):
     """棒読みちゃん（TCP接続）用の音声合成エンジン。"""
+    DISPLAY_NAME = "BOUYOMICHAN"
     DEFAULT_URL = "127.0.0.1:50001"
 
     @classmethod

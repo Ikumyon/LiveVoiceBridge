@@ -70,6 +70,42 @@ import core.tts.factory as tts_factory
 import core.dictionary as dictionary
 
 
+# Windows環境における日本語パスの pyopenjtalk 文字化け/初期化エラー問題を回避するセットアップ
+if platform.system() == "Windows":
+    try:
+        import site
+        import shutil
+        import tempfile
+        # pyopenjtalkのアセットがsite-packages内にあるか探す
+        site_dirs = site.getsitepackages()
+        dict_src = None
+        voice_src = None
+        for d in site_dirs:
+            p_dict = os.path.join(d, "pyopenjtalk", "open_jtalk_dic_utf_8-1.11")
+            p_voice = os.path.join(d, "pyopenjtalk", "htsvoice", "mei_normal.htsvoice")
+            if os.path.exists(p_dict) and os.path.exists(p_voice):
+                dict_src = p_dict
+                voice_src = p_voice
+                break
+        if dict_src and voice_src:
+            temp_dir = tempfile.gettempdir()
+            dest_dict_dir = os.path.join(temp_dir, "open_jtalk_dic_utf_8-1.11")
+            dest_voice_file = os.path.join(temp_dir, "mei_normal.htsvoice")
+            
+            if not os.path.exists(dest_dict_dir):
+                shutil.copytree(dict_src, dest_dict_dir)
+            if not os.path.exists(dest_voice_file):
+                shutil.copy2(voice_src, dest_voice_file)
+            
+            # 環境変数に設定。これ以降 pyopenjtalk をインポートしたモジュールは、
+            # 自動的にこの一時フォルダの辞書を参照するようになります。
+            os.environ["OPEN_JTALK_DICT_DIR"] = dest_dict_dir
+    except Exception as e:
+        print(f"[警告] pyopenjtalkの日本語パス回避設定に失敗しました: {e}")
+
+
+
+
 class LiveVoiceBridgeApp(QObject):
     def __init__(self):
         super().__init__()

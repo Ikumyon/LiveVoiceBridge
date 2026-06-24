@@ -4,3 +4,8 @@ grpcio
 grpcio-tools
 protobuf
 pykakasi
+emoji
+sherpa-onnx
+numpy
+soundfile
+pyopenjtalk
