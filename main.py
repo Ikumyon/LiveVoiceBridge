@@ -6,6 +6,29 @@ import queue
 import sys
 from pathlib import Path
 
+
+def _restart_with_project_venv() -> None:
+    """Windowsのソース実行をプロジェクトの仮想環境へ統一する。"""
+    if getattr(sys, "frozen", False) or platform.system() != "Windows":
+        return
+
+    venv_python = Path(__file__).resolve().parent / "venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        return
+
+    if Path(sys.executable).resolve() == venv_python.resolve():
+        return
+
+    os.execve(
+        str(venv_python),
+        [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]],
+        os.environ.copy(),
+    )
+
+
+if __name__ == "__main__":
+    _restart_with_project_venv()
+
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
     HAS_MULTIMEDIA = True
@@ -124,7 +147,6 @@ class LiveVoiceBridgeApp(QObject):
 
         self.load_settings()
         self.connect_signals()
-        self.window.destroyed.connect(self.stop_all)
         self._restore_startup_state()
 
     def _load_main_window(self) -> QWidget:
@@ -177,9 +199,9 @@ class LiveVoiceBridgeApp(QObject):
         self.comment_list.verticalScrollBar().rangeChanged.connect(self.auto_scroll_to_bottom)
 
     def _setup_network(self) -> None:
-        # 非同期画像ロード用のマネージャ
-        self.network_manager = QNetworkAccessManager(self)
-        self.network_manager.finished.connect(self.on_image_downloaded)
+        self.avatar_network_manager = QNetworkAccessManager(self)
+        self.avatar_network_manager.finished.connect(self.on_image_downloaded)
+        self.update_network_manager = QNetworkAccessManager(self)
 
     def _setup_toolbar_buttons(self) -> None:
         # PiPボタン・設定ツールボタンの取得
@@ -226,7 +248,7 @@ class LiveVoiceBridgeApp(QObject):
         url = QUrl("https://api.github.com/repos/Ikumyon/LiveVoiceBridge/releases/latest")
         request = QNetworkRequest(url)
         request.setRawHeader(b"User-Agent", b"LiveVoiceBridge")
-        reply = self.network_manager.get(request)
+        reply = self.update_network_manager.get(request)
         reply.finished.connect(lambda: self.on_update_check_finished(reply))
 
     def on_update_check_finished(self, reply: QNetworkReply) -> None:
@@ -322,7 +344,7 @@ class LiveVoiceBridgeApp(QObject):
         
         if profile_image_url:
             request = QNetworkRequest(QUrl(profile_image_url))
-            reply = self.network_manager.get(request)
+            reply = self.avatar_network_manager.get(request)
             reply.setProperty("avatar_label", avatar_label)
  
         # SE再生コマンドの処理
@@ -560,16 +582,66 @@ class LiveVoiceBridgeApp(QObject):
             self.restore_settings_to_threads(backup_config, backup_word_dict_data)
 
     def update_live_settings_from_dialog(self, dialog: SettingsDialog) -> None:
-        # ダイアログで操作された最新値をスレッドへ即時反映
+        # デバッグモード稼働中
+        engine_key = dialog.current_active_engine
+        current_config = {}
+        if engine_key == "voicevox":
+            current_config = {
+                "url": dialog.vv_url_line.text().strip(),
+                "path": dialog.vv_path_line.text().strip(),
+                "speaker_id": dialog.get_current_speaker_id(),
+                "speed": dialog.vv_speed_spin.value(),
+                "pitch": dialog.vv_pitch_spin.value(),
+                "intonation": dialog.vv_intonation_spin.value(),
+                "volume": dialog.vv_volume_spin.value(),
+                "pause_length": dialog.vv_pause_spin.value(),
+                "pre_phoneme_length": dialog.vv_pre_phoneme_spin.value(),
+                "post_phoneme_length": dialog.vv_post_phoneme_spin.value(),
+                "max_length": dialog.vv_max_length_spin.value(),
+            }
+        elif engine_key == "coeiroink":
+            current_config = {
+                "url": dialog.coe_url_line.text().strip(),
+                "path": dialog.coe_path_line.text().strip(),
+                "speaker_id": dialog.get_current_speaker_id(),
+                "speed": dialog.coe_speed_spin.value(),
+                "pitch": dialog.coe_pitch_spin.value(),
+                "intonation": dialog.coe_intonation_spin.value(),
+                "volume": dialog.coe_volume_spin.value(),
+                "pause_length": dialog.coe_pause_length_spin.value() if hasattr(dialog, "coe_pause_length_spin") else dialog.coe_pause_spin.value(), # (dialog._bind_tts_page_widgets で coe_pause_spin にバインドされていました)
+                "pre_phoneme_length": dialog.coe_pre_phoneme_spin.value(),
+                "post_phoneme_length": dialog.coe_post_phoneme_spin.value(),
+                "max_length": dialog.coe_max_length_spin.value(),
+            }
+        elif engine_key == "bouyomichan":
+            current_config = {
+                "url": dialog.bc_url_line.text().strip(),
+                "path": dialog.bc_path_line.text().strip(),
+                "speaker_id": dialog.get_current_speaker_id(),
+                "speed": dialog.bc_speed_spin.value(),
+                "pitch": dialog.bc_pitch_spin.value(),
+                "volume": dialog.bc_volume_spin.value(),
+                "max_length": dialog.bc_max_length_spin.value(),
+            }
+        elif engine_key == "sherpa_supertonic":
+            current_config = {
+                "url": "local://sherpa-supertonic",
+                "path": dialog.engine_settings["sherpa_supertonic"]["path"],
+                "speaker_id": dialog.get_current_speaker_id(),
+                "speed": dialog.st_speed_spin.value(),
+                "volume": dialog.st_volume_spin.value(),
+                "max_length": dialog.st_max_length_spin.value(),
+            }
+
         if self.chat_worker is not None and self.chat_worker.isRunning():
             self.chat_worker.skip_history = dialog.skip_history_check.isChecked()
             self.chat_worker.read_super_chat = dialog.read_super_chat_check.isChecked()
-            self.chat_worker.max_length = dialog.max_length_spin.value()
+            self.chat_worker.max_length = int(current_config.get("max_length", 50))
             self.chat_worker.read_blocks = dialog.get_read_blocks()
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.speaker_id = dialog.get_current_speaker_id()
-            self.speech_worker.speed = dialog.speed_spin.value()
+            self.speech_worker.engine_type = engine_key
+            self.speech_worker.engine_config = current_config
             self.speech_worker.word_list = dialog.get_all_merged_word_list()
 
         if self.comment_window is not None:
@@ -580,18 +652,20 @@ class LiveVoiceBridgeApp(QObject):
 
     def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
         # スレッドのパラメータをバックアップした元の値に復元
+        engine_type = backup_config.get("tts_engine", "voicevox").lower()
+        if engine_type == "supertonic 3":
+            engine_type = "sherpa_supertonic"
+        engine_config = backup_config.get(engine_type, {})
+
         if self.chat_worker is not None and self.chat_worker.isRunning():
             self.chat_worker.skip_history = backup_config.get("skip_history", True)
             self.chat_worker.read_super_chat = backup_config.get("read_super_chat", True)
-            self.chat_worker.max_length = backup_config.get("max_length", 50)
+            self.chat_worker.max_length = int(engine_config.get("max_length", 50))
             self.chat_worker.read_blocks = normalize_read_blocks(backup_config.get("read_blocks"))
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            engine_type = backup_config.get("tts_engine", "voicevox")
-            engine_config = backup_config.get(engine_type, {})
-            speaker_id = int(engine_config.get("speaker_id", 1))
-            self.speech_worker.speaker_id = speaker_id
-            self.speech_worker.speed = float(backup_config.get("speed", 1.0))
+            self.speech_worker.engine_type = engine_type
+            self.speech_worker.engine_config = engine_config
             # 全グループの単語をマージして適用
             self.speech_worker.word_list = dictionary.merge_word_dict_data(backup_word_dict_data)
 
@@ -640,8 +714,10 @@ class LiveVoiceBridgeApp(QObject):
         self.config["youtube_url"] = url_or_id
         self.save_config()
 
-        # 音声合成エンジンの自動起動
-        self.ensure_tts_running(tts_url, tts_path, engine_type)
+        # 音声合成エンジンを初期化できない場合はワーカーを開始しない
+        if not self.ensure_tts_running(tts_url, tts_path, engine_type):
+            self.set_status("音声合成エンジンの初期化に失敗しました。")
+            return
 
         # すべての辞書ファイルの読み込み・統合
         word_list = []
@@ -650,12 +726,18 @@ class LiveVoiceBridgeApp(QObject):
         except Exception as exc:
             self.append_log(f"[警告] 辞書ファイルの読み込みに失敗しました: {exc}")
 
+        # 固有の設定オブジェクト
+        engine_key = engine_type.lower()
+        if engine_key == "supertonic 3":
+            engine_key = "sherpa_supertonic"
+        engine_config = self.config.get(engine_key, {})
+
         self.speech_queue = queue.Queue()
         self.speech_worker = SpeechWorker(
             speech_queue=self.speech_queue,
             tts_engine=self.tts_engine,
-            speaker_id=speaker_id,
-            speed=float(self.config.get("speed", 1.0)),
+            engine_type=engine_key,
+            engine_config=engine_config,
             word_list=word_list,
         )
         self.speech_worker.error.connect(self.show_error)
@@ -677,7 +759,7 @@ class LiveVoiceBridgeApp(QObject):
             api_key=api_key,
             skip_history=bool(self.config.get("skip_history", True)),
             read_super_chat=bool(self.config.get("read_super_chat", True)),
-            max_length=int(self.config.get("max_length", 50)),
+            max_length=int(engine_config.get("max_length", 50)),
             read_blocks=self.config.get("read_blocks"),
         )
         self.chat_worker.comment_received.connect(self.add_comment_item)
@@ -799,6 +881,7 @@ def main() -> None:
         app.setWindowIcon(QIcon(str(ICON_FILE)))
 
     controller = LiveVoiceBridgeApp()
+    app.aboutToQuit.connect(controller.stop_all)
     controller.show()
     sys.exit(app.exec())
 

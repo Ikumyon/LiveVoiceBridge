@@ -52,7 +52,11 @@ def ensure_tts_running(
         return current_engine, True
 
     if current_engine.IS_LOCAL_ENGINE:
-        show_error(f"{engine_display_name}の初期化に失敗しました。モデルフォルダのパスおよび依存関係を確認してください。")
+        detail = getattr(current_engine, "last_error", "")
+        message = f"{engine_display_name}の初期化に失敗しました。"
+        if detail:
+            message += f"\n\n詳細: {detail}"
+        show_error(message)
     else:
         show_error(f"{engine_display_name}の起動を確認できませんでした。手動で起動してください。")
     return current_engine, False

@@ -21,7 +21,18 @@ class BaseTTSEngine(ABC):
         self.process = None
 
     @abstractmethod
-    def synthesize_wav(self, text: str, speed: float = None, pitch: float = None, volume: float = None, speaker_id: int = None) -> bytes | None:
+    def synthesize_wav(
+        self,
+        text: str,
+        speed: float = None,
+        pitch: float = None,
+        intonation: float = None,
+        volume: float = None,
+        pause_length: float = None,
+        pre_phoneme_length: float = None,
+        post_phoneme_length: float = None,
+        speaker_id: int = None,
+    ) -> bytes | None:
         pass
 
     @abstractmethod

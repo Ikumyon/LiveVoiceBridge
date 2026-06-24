@@ -21,15 +21,23 @@ class SpeechWorker(QThread):
     dict_add_requested = Signal(str, str)
     dict_del_requested = Signal(str)
 
-    def __init__(self, speech_queue: queue.Queue, tts_engine: BaseTTSEngine, speaker_id: int, speed: float, word_list: list[dict] = None):
+    def __init__(
+        self,
+        speech_queue: queue.Queue,
+        tts_engine: BaseTTSEngine,
+        engine_type: str,
+        engine_config: dict,
+        word_list: list[dict] = None
+    ):
         super().__init__()
         self.speech_queue = speech_queue
         self.tts_engine = tts_engine
-        self.speaker_id = speaker_id
-        self.speed = speed
+        self.engine_type = engine_type.lower()
+        self.engine_config = engine_config if engine_config is not None else {}
         self.word_list = word_list if word_list is not None else []
         self._running = True
-        self.executor = ThreadPoolExecutor(max_workers=8)
+        max_workers = 1 if self.engine_type == "sherpa_supertonic" else 8
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def stop(self) -> None:
         self._running = False
@@ -120,19 +128,59 @@ class SpeechWorker(QThread):
         panning: str = None,
     ) -> str | None:
         try:
-            self.log.emit(f"[SpeechWorker] 音声合成リクエスト送信: '{text}' (話者: {speaker_id})")
+            self.log.emit(f"[SpeechWorker] 音声合成リクエスト送信: '{text}'")
             text = replace_words(text, self.word_list)
             text = replace_emojis(text)
 
-            target_speaker = speaker_id if speaker_id is not None else self.speaker_id
-            target_speed = speed if speed is not None else self.speed
-            target_volume = volume if volume is not None else 1.0
+            # 各パラメータについて、セグメントからの個別指定がなければ engine_config から、それも無ければ合理的なデフォルト値を取得
+            cfg = self.engine_config
+            
+            # 話者 ID
+            target_speaker = speaker_id if speaker_id is not None else int(cfg.get("speaker_id", 0))
+            
+            # 話速
+            target_speed = speed if speed is not None else cfg.get("speed")
+            
+            # 音高
+            target_pitch = pitch if pitch is not None else cfg.get("pitch")
+            
+            # 音量
+            target_volume = volume if volume is not None else cfg.get("volume")
+            
+            # 抑揚
+            target_intonation = cfg.get("intonation")
+            
+            # 間長 (pause_length)
+            target_pause_length = cfg.get("pause_length")
+            
+            # 開始無音 (pre_phoneme_length)
+            target_pre_phoneme_length = cfg.get("pre_phoneme_length")
+            
+            # 終了無音 (post_phoneme_length)
+            target_post_phoneme_length = cfg.get("post_phoneme_length")
+
+            # 棒読みちゃん用の値調整
+            if self.engine_type == "bouyomichan":
+                target_speed = int(target_speed) if target_speed is not None else -1
+                target_pitch = int(target_pitch) if target_pitch is not None else -1
+                target_volume = int(target_volume) if target_volume is not None else -1
+            else:
+                # 棒読みちゃん以外のエンジン
+                target_speed = float(target_speed) if target_speed is not None else 1.0
+                target_pitch = float(target_pitch) if target_pitch is not None else 0.0
+                target_volume = float(target_volume) if target_volume is not None else 1.0
+
+            self.log.emit(f"[SpeechWorker] 合成パラメータ -> speaker: {target_speaker}, speed: {target_speed}, pitch: {target_pitch}, volume: {target_volume}")
 
             content = self.tts_engine.synthesize_wav(
                 text=text,
                 speed=target_speed,
-                pitch=pitch,
+                pitch=target_pitch,
+                intonation=target_intonation,
                 volume=target_volume,
+                pause_length=target_pause_length,
+                pre_phoneme_length=target_pre_phoneme_length,
+                post_phoneme_length=target_post_phoneme_length,
                 speaker_id=target_speaker,
             )
             if not content:

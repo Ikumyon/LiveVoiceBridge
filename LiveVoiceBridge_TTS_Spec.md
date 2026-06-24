@@ -227,7 +227,7 @@ requirements.txt
   "tts_engine": "sherpa_supertonic",
   "sherpa_supertonic": {
     "url": "local://sherpa-supertonic",
-    "path": "models/sherpa-onnx-supertonic-3-ja-int8",
+    "path": "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
     "speaker_id": 0,
     "sample_rate": 24000,
     "speed": 1.0,
@@ -268,7 +268,7 @@ requirements.txt
 ```text
 LiveVoiceBridge-main/
 └─ models/
-   └─ sherpa-onnx-supertonic-3-ja-int8/
+   └─ sherpa-onnx-supertonic-3-tts-int8-2026-05-11/
       ├─ duration_predictor.int8.onnx
       ├─ text_encoder.int8.onnx
       ├─ vector_estimator.int8.onnx
@@ -582,14 +582,14 @@ SHERPA_SUPERTONIC
   local://sherpa-supertonic
 
 実行ファイル:
-  models/sherpa-onnx-supertonic-3-ja-int8
+  models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11
 ```
 
 長期実装では表示名を変える。
 
 ```text
 モデルフォルダ:
-  models/sherpa-onnx-supertonic-3-ja-int8
+  models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11
 
 デバイス優先順位:
   NPU → GPU → CPU
@@ -620,7 +620,7 @@ Supertonic 3モデルを確認しました。
 
 ```text
 Supertonic 3モデルが見つかりません。
-models/sherpa-onnx-supertonic-3-ja-int8 を確認してください。
+models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11 を確認してください。
 ```
 
 ---
@@ -655,7 +655,7 @@ onnxruntime-openvino
 ### 16.1 起動時
 
 ```text
-[Supertonic3] モデル確認中: models/sherpa-onnx-supertonic-3-ja-int8
+[Supertonic3] モデル確認中: models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11
 [Supertonic3] モデル読み込み成功
 ```
 
@@ -832,7 +832,7 @@ class SherpaSupertonicEngine(BaseTTSEngine):
 
     def __init__(self, url: str, exe_path: str = ""):
         super().__init__(url or self.DEFAULT_URL, exe_path)
-        self.model_dir = Path(exe_path or "models/sherpa-onnx-supertonic-3-ja-int8")
+        self.model_dir = Path(exe_path or "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11")
         self._tts = None
         self._lock = threading.Lock()
 

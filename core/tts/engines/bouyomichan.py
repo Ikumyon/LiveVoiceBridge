@@ -19,11 +19,17 @@ class BouyomiChanEngine(BaseTTSEngine):
                 "speaker_id": 0
             }
         
-        # 既存の設定から移行できるキーがあれば処理（必要に応じて拡張）
+        bc = config["bouyomichan"]
         if "bouyomichan_url" in loaded_config:
-            config["bouyomichan"]["url"] = loaded_config["bouyomichan_url"]
+            bc["url"] = loaded_config["bouyomichan_url"]
         if "bouyomichan_path" in loaded_config:
-            config["bouyomichan"]["path"] = loaded_config["bouyomichan_path"]
+            bc["path"] = loaded_config["bouyomichan_path"]
+
+        # 新パラメータの追加
+        bc.setdefault("speed", -1)
+        bc.setdefault("pitch", -1)
+        bc.setdefault("volume", -1)
+        bc.setdefault("max_length", loaded_config.get("max_length", 50))
 
         config.pop("bouyomichan_url", None)
         config.pop("bouyomichan_path", None)
@@ -50,22 +56,22 @@ class BouyomiChanEngine(BaseTTSEngine):
         except Exception:
             return False
 
-    def synthesize_wav(self, text: str, speed: float = None, pitch: float = None, volume: float = None, speaker_id: int = None) -> bytes | None:
-        # パラメータのマッピング
-        # 速度 (50〜300, -1: デフォルト)
-        b_speed = int(speed * 100) if speed is not None else -1
-        b_speed = max(50, min(b_speed, 300)) if b_speed != -1 else -1
-
-        # 音程 (50〜200, -1: デフォルト)
-        # pitch は通常 -0.15〜0.15 程度のため、200倍して 70〜130 付近にマッピング
-        b_pitch = int(100 + pitch * 200) if pitch is not None else -1
-        b_pitch = max(50, min(b_pitch, 200)) if b_pitch != -1 else -1
-
-        # 音量 (0〜100, -1: デフォルト)
-        b_volume = int(volume * 100) if volume is not None else -1
-        b_volume = max(0, min(b_volume, 100)) if b_volume != -1 else -1
-
-        # 声種 (0: デフォルト, 1〜8...)
+    def synthesize_wav(
+        self,
+        text: str,
+        speed: float = None,
+        pitch: float = None,
+        intonation: float = None,
+        volume: float = None,
+        pause_length: float = None,
+        pre_phoneme_length: float = None,
+        post_phoneme_length: float = None,
+        speaker_id: int = None,
+    ) -> bytes | None:
+        # パラメータのマッピング (UIから送られる speed, pitch, volume はすでに整数値である前提)
+        b_speed = int(speed) if speed is not None else -1
+        b_pitch = int(pitch) if pitch is not None else -1
+        b_volume = int(volume) if volume is not None else -1
         b_voice = int(speaker_id) if speaker_id is not None else 0
 
         # TCP経由で棒読みちゃんにコマンド送信
