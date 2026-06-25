@@ -1131,8 +1131,11 @@ class SettingsDialog(QObject):
             self.speaker_button.setText(f"カスタム (ID: {speaker_id})")
 
     def get_engine_instance(self, url: str, exe_path: str) -> BaseTTSEngine:
-        engine_type = self._get_engine_key(self.tts_engine_combo.currentText())
-        return tts_factory.get_engine_instance(engine_type, url, exe_path)
+        return tts_factory.get_engine_instance(
+            self.current_active_engine,
+            url,
+            exe_path,
+        )
 
     def _fetch_speaker_data(
         self,

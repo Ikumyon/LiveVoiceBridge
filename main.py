@@ -707,9 +707,33 @@ class LiveVoiceBridgeApp(QObject):
             self.chat_worker.read_blocks = dialog.get_read_blocks()
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.engine_type = engine_key
-            self.speech_worker.engine_config = current_config
             self.speech_worker.word_list = dialog.get_all_merged_word_list()
+            engine_class = tts_factory.get_engine_class(engine_key)
+            url = current_config.get("url", engine_class.DEFAULT_URL)
+            path = current_config.get("path", "")
+            device = current_config.get("device", "cpu")
+            signature = (engine_key, url, path, device)
+
+            if (
+                self._tts_ready_signature == signature
+                and self.tts_engine is not None
+                and self.tts_engine.is_running()
+            ):
+                self.speech_worker.tts_engine = self.tts_engine
+                self.speech_worker.engine_type = engine_key
+                self.speech_worker.engine_config = current_config
+            else:
+                self._request_tts_initialization(
+                    {
+                        "engine_type": engine_key,
+                        "engine_config": current_config,
+                        "url": url,
+                        "path": path,
+                        "device": device,
+                        "signature": signature,
+                    },
+                    for_start=False,
+                )
 
         if self.comment_window is not None:
             self.comment_window.opacity = dialog.opacity_slider.value() / 100.0
@@ -860,6 +884,13 @@ class LiveVoiceBridgeApp(QObject):
             self.tts_engine = worker.engine
             if self.speech_worker is not None and self.speech_worker.isRunning():
                 self.speech_worker.tts_engine = worker.engine
+                active_request = self._desired_tts_request
+                if (
+                    active_request is not None
+                    and active_request["signature"] == signature
+                ):
+                    self.speech_worker.engine_type = active_request["engine_type"]
+                    self.speech_worker.engine_config = active_request["engine_config"]
             if previous_engine is not None and previous_engine is not worker.engine:
                 previous_engine.terminate()
             self._tts_ready_signature = signature
