@@ -6,7 +6,12 @@ import time
 import requests
 from PySide6.QtCore import QThread, Signal
 
-from core.comment_processing import build_read_text, clean_comment, normalize_read_blocks, parse_comment_into_segments
+from core.comment_processing import (
+    build_read_text,
+    clean_comment,
+    normalize_read_blocks,
+    parse_comment_into_segments,
+)
 from core.streaming.youtube.grpc import GRPC_TARGET, ensure_grpc_files
 from core.streaming.youtube.url import extract_video_id
 
@@ -174,26 +179,7 @@ class YouTubeChatStreamWorker(QThread):
 
                         if not is_skip:
                             self.log.emit(f"{author}: {clean_msg}")
-                            for seg in segments:
-                                text_to_speak = seg["text"]
-                                if not text_to_speak:
-                                    continue
-
-                                queue_item = {
-                                    "text": text_to_speak,
-                                    "speed": seg["speed"],
-                                    "pitch": seg["pitch"],
-                                    "volume": seg["volume"],
-                                    "speaker_id": seg["speaker_id"],
-                                    "echo": seg["echo"],
-                                    "yamabiko": seg["yamabiko"],
-                                    "panning": seg["panning"],
-                                }
-                                if seg.get("action"):
-                                    queue_item["action"] = seg["action"]
-                                    queue_item["word"] = seg.get("word")
-                                    queue_item["reading"] = seg.get("reading")
-                                self.speech_queue.put(queue_item)
+                            self.speech_queue.put(segments)
                     first_response = False
 
                 if self._running:

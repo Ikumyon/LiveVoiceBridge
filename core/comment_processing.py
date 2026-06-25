@@ -257,6 +257,26 @@ def build_read_text(read_blocks: list[dict], author: str, message: str) -> str:
     return "".join(parts).strip()
 
 
+def split_speech_segments(segments: list[dict]) -> list[dict]:
+    queue_items = []
+    for segment in segments:
+        text = str(segment.get("text", ""))
+        sentences = [
+            sentence.strip()
+            for sentence in re.findall(r"[^。]*。|[^。]+$", text)
+            if sentence.strip()
+        ]
+        for index, sentence in enumerate(sentences):
+            queue_item = dict(segment)
+            queue_item["text"] = sentence
+            if index != len(sentences) - 1:
+                queue_item.pop("action", None)
+                queue_item.pop("word", None)
+                queue_item.pop("reading", None)
+            queue_items.append(queue_item)
+    return queue_items
+
+
 def clean_comment(text: str, max_len: int) -> str:
     text = html.unescape(text)
     text = re.sub(r"https?://\S+", "URL", text)
