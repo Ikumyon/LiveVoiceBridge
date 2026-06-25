@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from core.comment_processing import hiragana_to_katakana
+
 from core.tts.base import BaseTTSEngine
 from core.app_config import EXE_DIR
 
@@ -182,6 +184,7 @@ class SupertonicLightweightEngine(BaseTTSEngine):
         normalized = html.unescape(text)
         normalized = re.sub(r"</?ja\s*>", "", normalized, flags=re.IGNORECASE)
         normalized = unicodedata.normalize("NFKC", normalized).strip()
+        normalized = hiragana_to_katakana(normalized)
         normalized = re.sub(r"\s+", " ", normalized)
         if not normalized:
             return ""

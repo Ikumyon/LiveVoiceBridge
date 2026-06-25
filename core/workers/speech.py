@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QThread, Signal
 
 from core.audio.playback import apply_audio_effects, play_wav
-from core.comment_processing import replace_emojis, replace_words, split_speech_segments
+from core.comment_processing import (
+    replace_emojis,
+    replace_words,
+    split_speech_segments,
+)
 from core.tts.wav_cache import TtsWavCache
 
 if TYPE_CHECKING:

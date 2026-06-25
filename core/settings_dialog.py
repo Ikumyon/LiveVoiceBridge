@@ -275,7 +275,6 @@ class SettingsDialog(QObject):
         self._init_dictionary_state()
         self._setup_read_block_placeholder()
         self._setup_speaker_menu()
-        self._setup_individual_max_length_spins()
         self._bind_popout_widgets()
         self._setup_tts_engine_combo()
         self._init_engine_settings()
@@ -416,20 +415,6 @@ class SettingsDialog(QObject):
         self.speaker_menu = QMenu(self.dialog_window)
         self.speaker_button.setMenu(self.speaker_menu)
         self.rebuild_speaker_menu()
-
-    def _setup_individual_max_length_spins(self) -> None:
-        # 最大文字数スピンボックスの設定 (-1で無制限)
-        for spin in [
-            self.vv_max_length_spin,
-            self.coe_max_length_spin,
-            self.bc_max_length_spin,
-            self.lightweight_st_max_length_spin,
-            self.st_max_length_spin,
-        ]:
-            if spin:
-                spin.setMinimum(-1)
-                spin.setSpecialValueText("無制限")
-                spin.setMaximum(1000)
 
     def _bind_popout_widgets(self) -> None:
         # UIからPiP設定ウィジェットを取得

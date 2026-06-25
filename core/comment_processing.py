@@ -277,6 +277,15 @@ def split_speech_segments(segments: list[dict]) -> list[dict]:
     return queue_items
 
 
+def hiragana_to_katakana(text: str) -> str:
+    return "".join(
+        chr(ord(character) + 0x60)
+        if "\u3041" <= character <= "\u3096"
+        else character
+        for character in text
+    )
+
+
 def clean_comment(text: str, max_len: int) -> str:
     text = html.unescape(text)
     text = re.sub(r"https?://\S+", "URL", text)

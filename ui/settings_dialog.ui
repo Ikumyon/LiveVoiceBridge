@@ -325,10 +325,10 @@
           <string>音声合成 (TTS) 設定</string>
          </property>
          <layout class="QGridLayout" name="ttsGridLayout">
-          <item row="0" column="0">
-           <widget class="QLabel" name="ttsEngineLabel">
+          <item row="0" column="2">
+           <widget class="QLabel" name="speakerLabel">
             <property name="text">
-             <string>音声エンジン:</string>
+             <string>スピーカー:</string>
             </property>
            </widget>
           </item>
@@ -346,10 +346,10 @@
             </item>
            </widget>
           </item>
-          <item row="0" column="2">
-           <widget class="QLabel" name="speakerLabel">
+          <item row="0" column="0">
+           <widget class="QLabel" name="ttsEngineLabel">
             <property name="text">
-             <string>スピーカー:</string>
+             <string>音声エンジン:</string>
             </property>
            </widget>
           </item>
@@ -357,13 +357,6 @@
            <widget class="QPushButton" name="speakerButton">
             <property name="text">
              <string/>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="4">
-           <widget class="QPushButton" name="ttsTestButton">
-            <property name="text">
-             <string>接続確認</string>
             </property>
            </widget>
           </item>
@@ -1213,23 +1206,10 @@
             </widget>
            </widget>
           </item>
-          <item row="2" column="0">
-           <widget class="QLabel" name="maxLengthLabel">
+          <item row="0" column="4">
+           <widget class="QPushButton" name="ttsTestButton">
             <property name="text">
-             <string>最大文字数:</string>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="1">
-           <widget class="QSpinBox" name="maxLengthSpinBox">
-            <property name="minimum">
-             <number>20</number>
-            </property>
-            <property name="maximum">
-             <number>300</number>
-            </property>
-            <property name="value">
-             <number>80</number>
+             <string>接続確認</string>
             </property>
            </widget>
           </item>
