@@ -6,6 +6,7 @@ protobuf
 pykakasi
 emoji
 sherpa-onnx
+supertonic
 numpy
 soundfile
 pyopenjtalk

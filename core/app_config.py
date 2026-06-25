@@ -82,8 +82,8 @@ DEFAULT_CONFIG = {
         "volume": -1,
         "max_length": 50,
     },
-    "sherpa_supertonic": {
-        "url": "local://sherpa-supertonic",
+    "supertonic_lightweight": {
+        "url": "local://supertonic-lightweight",
         "path": "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
         "speaker_id": 0,
         "sample_rate": 24000,
@@ -95,6 +95,16 @@ DEFAULT_CONFIG = {
         "device_policy": "auto",
         "device_priority": ["NPU", "GPU", "CPU"],
         "backend": "sherpa_onnx"
+    },
+    "supertonic": {
+        "url": "local://supertonic",
+        "path": "",
+        "speaker_id": 0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "max_length": 50,
+        "num_steps": 8,
+        "backend": "supertonic_sdk"
     },
     "read_blocks": [
         {"type": "message"},

@@ -36,7 +36,7 @@ class SpeechWorker(QThread):
         self.engine_config = engine_config if engine_config is not None else {}
         self.word_list = word_list if word_list is not None else []
         self._running = True
-        max_workers = 1 if self.engine_type == "sherpa_supertonic" else 8
+        max_workers = 1 if self.engine_type in {"supertonic", "supertonic_lightweight"} else 8
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def stop(self) -> None:
@@ -158,6 +158,9 @@ class SpeechWorker(QThread):
             
             # 終了無音 (post_phoneme_length)
             target_post_phoneme_length = cfg.get("post_phoneme_length")
+
+            if self.engine_type == "supertonic":
+                self.tts_engine.num_steps = int(cfg.get("num_steps", 8))
 
             # 棒読みちゃん用の値調整
             if self.engine_type == "bouyomichan":

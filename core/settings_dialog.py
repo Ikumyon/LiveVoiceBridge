@@ -310,7 +310,8 @@ class SettingsDialog(QObject):
         self.voicevox_page: QWidget = self.dialog_window.findChild(QWidget, "voicevoxPage")
         self.coeiroink_page: QWidget = self.dialog_window.findChild(QWidget, "coeiroinkPage")
         self.bouyomichan_page: QWidget = self.dialog_window.findChild(QWidget, "bouyomichanPage")
-        self.sherpa_supertonic_page: QWidget = self.dialog_window.findChild(QWidget, "sherpaSupertonicPage")
+        self.supertonic_lightweight_page: QWidget = self.dialog_window.findChild(QWidget, "supertonicLightweightPage")
+        self.supertonic_page: QWidget = self.dialog_window.findChild(QWidget, "supertonicPage")
 
         # VOICEVOX ウィジェット
         self.vv_url_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "voicevoxUrlLineEdit")
@@ -347,11 +348,17 @@ class SettingsDialog(QObject):
         self.bc_volume_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "bouyomichanVolumeSpinBox")
         self.bc_max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "bouyomichanMaxLengthSpinBox")
 
+        # Supertonic 3 軽量版ウィジェット
+        self.lightweight_st_speed_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "supertonicLightweightSpeedDoubleSpinBox")
+        self.lightweight_st_volume_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "supertonicLightweightVolumeDoubleSpinBox")
+        self.lightweight_st_max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicLightweightMaxLengthSpinBox")
+        self.lightweight_st_download_button: QPushButton = self.dialog_window.findChild(QPushButton, "supertonicLightweightDownloadButton")
+
         # Supertonic 3 ウィジェット
-        self.st_speed_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "sherpaSupertonicSpeedDoubleSpinBox")
-        self.st_volume_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "sherpaSupertonicVolumeDoubleSpinBox")
-        self.st_max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "sherpaSupertonicMaxLengthSpinBox")
-        self.st_download_button: QPushButton = self.dialog_window.findChild(QPushButton, "sherpaSupertonicDownloadButton")
+        self.st_speed_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "supertonicSpeedDoubleSpinBox")
+        self.st_volume_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "supertonicVolumeDoubleSpinBox")
+        self.st_steps_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicStepsSpinBox")
+        self.st_max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicMaxLengthSpinBox")
 
     def _bind_read_block_widgets(self) -> None:
         self.read_block_scroll_area: QScrollArea = self.dialog_window.findChild(QScrollArea, "readBlockScrollArea")
@@ -403,7 +410,13 @@ class SettingsDialog(QObject):
 
     def _setup_individual_max_length_spins(self) -> None:
         # 最大文字数スピンボックスの設定 (-1で無制限)
-        for spin in [self.vv_max_length_spin, self.coe_max_length_spin, self.bc_max_length_spin, self.st_max_length_spin]:
+        for spin in [
+            self.vv_max_length_spin,
+            self.coe_max_length_spin,
+            self.bc_max_length_spin,
+            self.lightweight_st_max_length_spin,
+            self.st_max_length_spin,
+        ]:
             if spin:
                 spin.setMinimum(-1)
                 spin.setSpecialValueText("無制限")
@@ -423,6 +436,8 @@ class SettingsDialog(QObject):
             self.tts_engine_combo.addItem("BOUYOMICHAN")
         if self.tts_engine_combo.findText("SUPERTONIC 3") == -1:
             self.tts_engine_combo.addItem("SUPERTONIC 3")
+        if self.tts_engine_combo.findText("SUPERTONIC 3 軽量版") == -1:
+            self.tts_engine_combo.addItem("SUPERTONIC 3 軽量版")
 
     def _init_engine_settings(self) -> None:
         # 各エンジン用の一時設定バッファ（話速、音高などのパラメータも保持）
@@ -462,13 +477,22 @@ class SettingsDialog(QObject):
                 "volume": -1,
                 "max_length": 50,
             },
-            "sherpa_supertonic": {
-                "url": "local://sherpa-supertonic",
+            "supertonic_lightweight": {
+                "url": "local://supertonic-lightweight",
                 "path": "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
                 "speaker_id": 0,
                 "speed": 1.0,
                 "volume": 1.0,
                 "max_length": 50,
+            },
+            "supertonic": {
+                "url": "local://supertonic",
+                "path": "",
+                "speaker_id": 0,
+                "speed": 1.0,
+                "volume": 1.0,
+                "max_length": 50,
+                "num_steps": 8,
             }
         }
         self.current_active_engine = "voicevox"
@@ -481,11 +505,15 @@ class SettingsDialog(QObject):
     def _get_engine_key(self, display_name: str) -> str:
         name_lower = display_name.lower()
         if name_lower == "supertonic 3":
-            return "sherpa_supertonic"
+            return "supertonic"
+        if name_lower == "supertonic 3 軽量版":
+            return "supertonic_lightweight"
         return name_lower
 
     def _get_engine_display_name(self, key: str) -> str:
-        if key == "sherpa_supertonic":
+        if key == "supertonic_lightweight":
+            return "SUPERTONIC 3 軽量版"
+        if key == "supertonic":
             return "SUPERTONIC 3"
         return key.upper()
 
@@ -506,8 +534,10 @@ class SettingsDialog(QObject):
             self.tts_engine_stacked.setCurrentWidget(self.coeiroink_page)
         elif self.current_active_engine == "bouyomichan":
             self.tts_engine_stacked.setCurrentWidget(self.bouyomichan_page)
-        elif self.current_active_engine == "sherpa_supertonic":
-            self.tts_engine_stacked.setCurrentWidget(self.sherpa_supertonic_page)
+        elif self.current_active_engine == "supertonic_lightweight":
+            self.tts_engine_stacked.setCurrentWidget(self.supertonic_lightweight_page)
+        elif self.current_active_engine == "supertonic":
+            self.tts_engine_stacked.setCurrentWidget(self.supertonic_page)
 
     def load_settings(self) -> None:
         env_key = os.environ.get("YOUTUBE_API_KEY", "")
@@ -557,15 +587,26 @@ class SettingsDialog(QObject):
         bc["volume"] = int(bouyomi_config.get("volume", -1))
         bc["max_length"] = int(bouyomi_config.get("max_length", 50))
 
-        # Supertonic 3設定の読み込み
-        st_config = self.main_app.config.get("sherpa_supertonic", {})
-        st = self.engine_settings["sherpa_supertonic"]
-        st["url"] = st_config.get("url", "local://sherpa-supertonic")
+        # Supertonic 3 軽量版設定の読み込み
+        st_config = self.main_app.config.get("supertonic_lightweight", {})
+        st = self.engine_settings["supertonic_lightweight"]
+        st["url"] = st_config.get("url", "local://supertonic-lightweight")
         st["path"] = st_config.get("path", "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11")
         st["speaker_id"] = int(st_config.get("speaker_id", 0))
         st["speed"] = float(st_config.get("speed", 1.0))
         st["volume"] = float(st_config.get("volume", 1.0))
         st["max_length"] = int(st_config.get("max_length", 50))
+
+        # Supertonic 3設定の読み込み
+        st_config = self.main_app.config.get("supertonic", {})
+        supertonic = self.engine_settings["supertonic"]
+        supertonic["url"] = "local://supertonic"
+        supertonic["path"] = ""
+        supertonic["speaker_id"] = int(st_config.get("speaker_id", 0))
+        supertonic["speed"] = float(st_config.get("speed", 1.0))
+        supertonic["volume"] = float(st_config.get("volume", 1.0))
+        supertonic["max_length"] = int(st_config.get("max_length", 50))
+        supertonic["num_steps"] = int(st_config.get("num_steps", 8))
 
         # VOICEVOX ウィジェットへの適用
         self.vv_url_line.setText(vv["url"])
@@ -599,10 +640,16 @@ class SettingsDialog(QObject):
         self.bc_volume_spin.setValue(bc["volume"])
         self.bc_max_length_spin.setValue(bc["max_length"])
 
+        # Supertonic 3 軽量版ウィジェットへの適用
+        self.lightweight_st_speed_spin.setValue(st["speed"])
+        self.lightweight_st_volume_spin.setValue(st["volume"])
+        self.lightweight_st_max_length_spin.setValue(st["max_length"])
+
         # Supertonic 3 ウィジェットへの適用
-        self.st_speed_spin.setValue(st["speed"])
-        self.st_volume_spin.setValue(st["volume"])
-        self.st_max_length_spin.setValue(st["max_length"])
+        self.st_speed_spin.setValue(supertonic["speed"])
+        self.st_volume_spin.setValue(supertonic["volume"])
+        self.st_steps_spin.setValue(supertonic["num_steps"])
+        self.st_max_length_spin.setValue(supertonic["max_length"])
 
         # 画面のコントロールへ現在アクティブなエンジンの設定値を適用
         self._update_ui_for_active_engine()
@@ -688,19 +735,28 @@ class SettingsDialog(QObject):
             "volume": self.bc_volume_spin.value(),
             "max_length": self.bc_max_length_spin.value(),
         })
+        # Supertonic 3 軽量版
+        self.engine_settings["supertonic_lightweight"].update({
+            "speaker_id": self.get_current_speaker_id() if self.current_active_engine == "supertonic_lightweight" else self.engine_settings["supertonic_lightweight"]["speaker_id"],
+            "speed": self.lightweight_st_speed_spin.value(),
+            "volume": self.lightweight_st_volume_spin.value(),
+            "max_length": self.lightweight_st_max_length_spin.value(),
+        })
         # Supertonic 3
-        self.engine_settings["sherpa_supertonic"].update({
-            "speaker_id": self.get_current_speaker_id() if self.current_active_engine == "sherpa_supertonic" else self.engine_settings["sherpa_supertonic"]["speaker_id"],
+        self.engine_settings["supertonic"].update({
+            "speaker_id": self.get_current_speaker_id() if self.current_active_engine == "supertonic" else self.engine_settings["supertonic"]["speaker_id"],
             "speed": self.st_speed_spin.value(),
             "volume": self.st_volume_spin.value(),
             "max_length": self.st_max_length_spin.value(),
+            "num_steps": self.st_steps_spin.value(),
         })
 
         # config に保存
         self.main_app.config["voicevox"] = self.engine_settings["voicevox"]
         self.main_app.config["coeiroink"] = self.engine_settings["coeiroink"]
         self.main_app.config["bouyomichan"] = self.engine_settings["bouyomichan"]
-        self.main_app.config["sherpa_supertonic"] = self.engine_settings["sherpa_supertonic"]
+        self.main_app.config["supertonic_lightweight"] = self.engine_settings["supertonic_lightweight"]
+        self.main_app.config["supertonic"] = self.engine_settings["supertonic"]
 
         self.main_app.config["skip_history"] = self.skip_history_check.isChecked()
         self.main_app.config["read_super_chat"] = self.read_super_chat_check.isChecked()
@@ -771,13 +827,19 @@ class SettingsDialog(QObject):
         self.bc_volume_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         self.bc_max_length_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
 
+        # Supertonic 3 軽量版
+        self.lightweight_st_speed_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
+        self.lightweight_st_volume_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
+        self.lightweight_st_max_length_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
+
         # Supertonic 3
         self.st_speed_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         self.st_volume_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
+        self.st_steps_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         self.st_max_length_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         
         # ダウンロードボタン
-        self.st_download_button.clicked.connect(self.download_supertonic_model)
+        self.lightweight_st_download_button.clicked.connect(self.download_supertonic_lightweight_model)
 
         # 読み替え辞書シグナル
         self.add_word_button.clicked.connect(self.add_word_row)
@@ -1095,8 +1157,10 @@ class SettingsDialog(QObject):
             url = self.coe_url_line.text().strip().rstrip("/")
         elif self.current_active_engine == "bouyomichan":
             url = self.bc_url_line.text().strip().rstrip("/")
-        elif self.current_active_engine == "sherpa_supertonic":
-            url = "local://sherpa-supertonic"
+        elif self.current_active_engine == "supertonic_lightweight":
+            url = "local://supertonic-lightweight"
+        elif self.current_active_engine == "supertonic":
+            url = "local://supertonic"
         else:
             url = ""
 
@@ -1104,8 +1168,8 @@ class SettingsDialog(QObject):
             return False
         try:
             path = (
-                self.engine_settings["sherpa_supertonic"]["path"]
-                if self.current_active_engine == "sherpa_supertonic"
+                self.engine_settings["supertonic_lightweight"]["path"]
+                if self.current_active_engine == "supertonic_lightweight"
                 else ""
             )
             _, speaker_data = self._fetch_speaker_data(url, path)
@@ -1124,14 +1188,17 @@ class SettingsDialog(QObject):
         elif self.current_active_engine == "bouyomichan":
             url = self.bc_url_line.text().strip().rstrip("/")
             path = self.bc_path_line.text().strip()
-        elif self.current_active_engine == "sherpa_supertonic":
-            url = "local://sherpa-supertonic"
-            path = self.engine_settings["sherpa_supertonic"]["path"]
+        elif self.current_active_engine == "supertonic_lightweight":
+            url = "local://supertonic-lightweight"
+            path = self.engine_settings["supertonic_lightweight"]["path"]
+        elif self.current_active_engine == "supertonic":
+            url = "local://supertonic"
+            path = ""
         else:
             url = ""
             path = ""
 
-        if not url and self.current_active_engine != "sherpa_supertonic":
+        if not url and self.current_active_engine not in {"supertonic_lightweight", "supertonic"}:
             QMessageBox.warning(self.dialog_window, "入力不足", "接続URLを入力してください。")
             return
 
@@ -1365,7 +1432,7 @@ class SettingsDialog(QObject):
             merged.extend(words)
         return merged
 
-    def download_supertonic_model(self) -> None:
+    def download_supertonic_lightweight_model(self) -> None:
         download_url = (
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
             "sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"
@@ -1402,7 +1469,7 @@ class SettingsDialog(QObject):
         if success:
             QMessageBox.information(self.dialog_window, "完了", message)
             model_path_rel = "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
-            self.engine_settings["sherpa_supertonic"]["path"] = model_path_rel
+            self.engine_settings["supertonic_lightweight"]["path"] = model_path_rel
             self.settings_changed.emit()
         else:
             if "キャンセル" in message:

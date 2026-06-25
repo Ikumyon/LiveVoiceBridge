@@ -3,13 +3,15 @@ from core.tts.base import BaseTTSEngine
 from core.tts.engines.voicevox import VoicevoxEngine
 from core.tts.engines.coeiroink import CoeiroinkEngine
 from core.tts.engines.bouyomichan import BouyomiChanEngine
-from core.tts.engines.sherpa_supertonic import SherpaSupertonicEngine
+from core.tts.engines.supertonic import SupertonicEngine
+from core.tts.engines.supertonic_lightweight import SupertonicLightweightEngine
 
 ENGINE_CLASSES: dict[str, type[BaseTTSEngine]] = {
     "voicevox": VoicevoxEngine,
     "coeiroink": CoeiroinkEngine,
     "bouyomichan": BouyomiChanEngine,
-    "sherpa_supertonic": SherpaSupertonicEngine,
+    "supertonic": SupertonicEngine,
+    "supertonic_lightweight": SupertonicLightweightEngine,
 }
 
 def get_engine_class(engine_type: str) -> type[BaseTTSEngine]:

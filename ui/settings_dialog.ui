@@ -17,7 +17,7 @@
    <item>
     <widget class="QTabWidget" name="settingsTabWidget">
      <property name="currentIndex">
-      <number>1</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="basicTab">
       <attribute name="title">
@@ -89,16 +89,6 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="checkUpdatesCheckBox">
-            <property name="text">
-             <string>起動時にアップデートを確認する</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
            <spacer name="optionsSpacer">
             <property name="orientation">
              <enum>Qt::Orientation::Horizontal</enum>
@@ -139,8 +129,8 @@
               <rect>
                <x>0</x>
                <y>0</y>
-               <width>96</width>
-               <height>26</height>
+               <width>570</width>
+               <height>54</height>
               </rect>
              </property>
              <layout class="QHBoxLayout" name="readBlockHBoxLayout">
@@ -288,6 +278,16 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="checkUpdatesCheckBox">
+         <property name="text">
+          <string>起動時にアップデートを確認する</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Orientation::Vertical</enum>
@@ -370,7 +370,7 @@
           <item row="1" column="0" colspan="5">
            <widget class="QStackedWidget" name="ttsEngineStackedWidget">
             <property name="currentIndex">
-             <number>3</number>
+             <number>0</number>
             </property>
             <widget class="QWidget" name="voicevoxPage">
              <layout class="QGridLayout" name="voicevoxGridLayout">
@@ -985,8 +985,8 @@
               </item>
              </layout>
             </widget>
-            <widget class="QWidget" name="sherpaSupertonicPage">
-             <layout class="QGridLayout" name="sherpaSupertonicGridLayout">
+            <widget class="QWidget" name="supertonicLightweightPage">
+             <layout class="QGridLayout" name="supertonicLightweightGridLayout">
               <property name="leftMargin">
                <number>0</number>
               </property>
@@ -1000,14 +1000,14 @@
                <number>0</number>
               </property>
               <item row="0" column="0">
-               <widget class="QLabel" name="sherpaSupertonicSpeedLabel">
+               <widget class="QLabel" name="supertonicLightweightSpeedLabel">
                 <property name="text">
                  <string>話速</string>
                 </property>
                </widget>
               </item>
               <item row="0" column="1">
-               <widget class="QDoubleSpinBox" name="sherpaSupertonicSpeedDoubleSpinBox">
+               <widget class="QDoubleSpinBox" name="supertonicLightweightSpeedDoubleSpinBox">
                 <property name="minimum">
                  <double>0.500000000000000</double>
                 </property>
@@ -1023,14 +1023,14 @@
                </widget>
               </item>
               <item row="0" column="2">
-               <widget class="QLabel" name="sherpaSupertonicVolumeLabel">
+               <widget class="QLabel" name="supertonicLightweightVolumeLabel">
                 <property name="text">
                  <string>音量</string>
                 </property>
                </widget>
               </item>
               <item row="0" column="3">
-               <widget class="QDoubleSpinBox" name="sherpaSupertonicVolumeDoubleSpinBox">
+               <widget class="QDoubleSpinBox" name="supertonicLightweightVolumeDoubleSpinBox">
                 <property name="minimum">
                  <double>0.000000000000000</double>
                 </property>
@@ -1046,14 +1046,112 @@
                </widget>
               </item>
               <item row="1" column="0">
-               <widget class="QLabel" name="sherpaSupertonicMaxLengthLabel">
+               <widget class="QLabel" name="supertonicLightweightMaxLengthLabel">
                 <property name="text">
                  <string>最大文字数:</string>
                 </property>
                </widget>
               </item>
               <item row="1" column="1">
-               <widget class="QSpinBox" name="sherpaSupertonicMaxLengthSpinBox">
+               <widget class="QSpinBox" name="supertonicLightweightMaxLengthSpinBox">
+                <property name="specialValueText">
+                 <string>無制限</string>
+                </property>
+                <property name="minimum">
+                 <number>-1</number>
+                </property>
+                <property name="maximum">
+                 <number>1000</number>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="2" colspan="2">
+               <widget class="QPushButton" name="supertonicLightweightDownloadButton">
+                <property name="text">
+                 <string>モデルのダウンロード</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="supertonicLightweightDeviceLabel">
+                <property name="text">
+                 <string>デバイス:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="QComboBox" name="supertonicLightweightDeviceComboBox">
+                <item>
+                 <property name="text">
+                  <string>CPU</string>
+                 </property>
+                </item>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+            <widget class="QWidget" name="supertonicPage">
+             <layout class="QGridLayout" name="supertonicGridLayout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item row="0" column="3">
+               <widget class="QDoubleSpinBox" name="supertonicVolumeDoubleSpinBox">
+                <property name="minimum">
+                 <double>0.000000000000000</double>
+                </property>
+                <property name="maximum">
+                 <double>2.000000000000000</double>
+                </property>
+                <property name="singleStep">
+                 <double>0.050000000000000</double>
+                </property>
+                <property name="value">
+                 <double>1.000000000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="0">
+               <widget class="QLabel" name="supertonicSpeedLabel">
+                <property name="text">
+                 <string>話速</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QDoubleSpinBox" name="supertonicSpeedDoubleSpinBox">
+                <property name="minimum">
+                 <double>0.700000000000000</double>
+                </property>
+                <property name="maximum">
+                 <double>2.000000000000000</double>
+                </property>
+                <property name="singleStep">
+                 <double>0.050000000000000</double>
+                </property>
+                <property name="value">
+                 <double>1.000000000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="2">
+               <widget class="QLabel" name="supertonicVolumeLabel">
+                <property name="text">
+                 <string>音量</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="3">
+               <widget class="QSpinBox" name="supertonicMaxLengthSpinBox">
                 <property name="specialValueText">
                  <string>無制限</string>
                 </property>
@@ -1068,10 +1166,53 @@
                 </property>
                </widget>
               </item>
-              <item row="1" column="2" colspan="2">
-               <widget class="QPushButton" name="sherpaSupertonicDownloadButton">
+              <item row="1" column="1">
+               <widget class="QSpinBox" name="supertonicStepsSpinBox">
+                <property name="minimum">
+                 <number>5</number>
+                </property>
+                <property name="maximum">
+                 <number>12</number>
+                </property>
+                <property name="value">
+                 <number>8</number>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="supertonicDeviceLabel">
+                <property name="text">
+                 <string>デバイス:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="QComboBox" name="supertonicDeviceComboBox">
+                <item>
+                 <property name="text">
+                  <string>CPU</string>
+                 </property>
+                </item>
+               </widget>
+              </item>
+              <item row="2" column="2" colspan="2">
+               <widget class="QPushButton" name="supertonicDownloadButton">
                 <property name="text">
                  <string>モデルのダウンロード</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="2">
+               <widget class="QLabel" name="supertonicMaxLengthLabel">
+                <property name="text">
+                 <string>最大文字数:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="supertonicStepsLabel">
+                <property name="text">
+                 <string>品質ステップ:</string>
                 </property>
                </widget>
               </item>

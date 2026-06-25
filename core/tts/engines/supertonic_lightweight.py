@@ -15,9 +15,9 @@ from core.tts.base import BaseTTSEngine
 from core.app_config import EXE_DIR
 
 
-class SherpaSupertonicEngine(BaseTTSEngine):
-    DISPLAY_NAME = "SUPERTONIC 3"
-    DEFAULT_URL = "local://sherpa-supertonic"
+class SupertonicLightweightEngine(BaseTTSEngine):
+    DISPLAY_NAME = "SUPERTONIC 3 軽量版"
+    DEFAULT_URL = "local://supertonic-lightweight"
     DEFAULT_MODEL_PATH = "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
     REQUIRES_URL = False
     IS_LOCAL_ENGINE = True
@@ -25,13 +25,13 @@ class SherpaSupertonicEngine(BaseTTSEngine):
     @classmethod
     def migrate_config(cls, config: dict, loaded_config: dict) -> None:
         """Supertonic 3 用のマイグレーション。"""
-        if "sherpa_supertonic" not in config or not isinstance(config["sherpa_supertonic"], dict):
-            config["sherpa_supertonic"] = {
+        if "supertonic_lightweight" not in config or not isinstance(config["supertonic_lightweight"], dict):
+            config["supertonic_lightweight"] = {
                 "url": cls.DEFAULT_URL,
                 "path": cls.DEFAULT_MODEL_PATH,
                 "speaker_id": 0
             }
-        st = config["sherpa_supertonic"]
+        st = config["supertonic_lightweight"]
         st["url"] = cls.DEFAULT_URL
         st["path"] = cls.DEFAULT_MODEL_PATH
         st.setdefault("speed", loaded_config.get("speed", 1.0))
@@ -116,7 +116,7 @@ class SherpaSupertonicEngine(BaseTTSEngine):
         except Exception as exc:
             self._tts = None
             self.last_error = str(exc)
-            print(f"[Supertonic3] 初期化失敗: {exc}")
+            print(f"[SupertonicLightweight] 初期化失敗: {exc}")
             return False
 
     def synthesize_wav(
@@ -146,7 +146,7 @@ class SherpaSupertonicEngine(BaseTTSEngine):
 
             with self._lock:
                 japanese_text = self._prepare_japanese_text(text)
-                print(f"[Supertonic3] TTS入力: {japanese_text}")
+                print(f"[SupertonicLightweight] TTS入力: {japanese_text}")
                 import sherpa_onnx
 
                 generation_config = sherpa_onnx.GenerationConfig()
@@ -169,7 +169,7 @@ class SherpaSupertonicEngine(BaseTTSEngine):
                 return self._pcm_to_wav_bytes(samples, audio.sample_rate)
 
         except Exception as e:
-            print(f"[Supertonic3] 合成失敗: {e}")
+            print(f"[SupertonicLightweight] 合成失敗: {e}")
             return None
 
     @staticmethod
@@ -198,6 +198,6 @@ class SherpaSupertonicEngine(BaseTTSEngine):
     def get_speakers(self) -> list[dict] | None:
         """Supertonic 3 の話者リスト。マルチスピーカーとして 10 人の話者を定義。"""
         return [{
-            "name": "Supertonic 3 Japanese",
+            "name": "Supertonic 3 軽量版",
             "styles": [{"name": f"Speaker {i}", "id": i} for i in range(10)]
         }]

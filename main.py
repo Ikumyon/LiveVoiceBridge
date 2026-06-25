@@ -623,14 +623,24 @@ class LiveVoiceBridgeApp(QObject):
                 "volume": dialog.bc_volume_spin.value(),
                 "max_length": dialog.bc_max_length_spin.value(),
             }
-        elif engine_key == "sherpa_supertonic":
+        elif engine_key == "supertonic_lightweight":
             current_config = {
-                "url": "local://sherpa-supertonic",
-                "path": dialog.engine_settings["sherpa_supertonic"]["path"],
+                "url": "local://supertonic-lightweight",
+                "path": dialog.engine_settings["supertonic_lightweight"]["path"],
+                "speaker_id": dialog.get_current_speaker_id(),
+                "speed": dialog.lightweight_st_speed_spin.value(),
+                "volume": dialog.lightweight_st_volume_spin.value(),
+                "max_length": dialog.lightweight_st_max_length_spin.value(),
+            }
+        elif engine_key == "supertonic":
+            current_config = {
+                "url": "local://supertonic",
+                "path": "",
                 "speaker_id": dialog.get_current_speaker_id(),
                 "speed": dialog.st_speed_spin.value(),
                 "volume": dialog.st_volume_spin.value(),
                 "max_length": dialog.st_max_length_spin.value(),
+                "num_steps": dialog.st_steps_spin.value(),
             }
 
         if self.chat_worker is not None and self.chat_worker.isRunning():
@@ -653,8 +663,6 @@ class LiveVoiceBridgeApp(QObject):
     def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
         # スレッドのパラメータをバックアップした元の値に復元
         engine_type = backup_config.get("tts_engine", "voicevox").lower()
-        if engine_type == "supertonic 3":
-            engine_type = "sherpa_supertonic"
         engine_config = backup_config.get(engine_type, {})
 
         if self.chat_worker is not None and self.chat_worker.isRunning():
@@ -728,8 +736,6 @@ class LiveVoiceBridgeApp(QObject):
 
         # 固有の設定オブジェクト
         engine_key = engine_type.lower()
-        if engine_key == "supertonic 3":
-            engine_key = "sherpa_supertonic"
         engine_config = self.config.get(engine_key, {})
 
         self.speech_queue = queue.Queue()
