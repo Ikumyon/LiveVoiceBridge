@@ -98,12 +98,13 @@ DEFAULT_CONFIG = {
     },
     "supertonic": {
         "url": "local://supertonic",
-        "path": "",
+        "path": "models/supertonic-3",
         "speaker_id": 0,
         "speed": 1.0,
         "volume": 1.0,
         "max_length": 50,
         "num_steps": 8,
+        "device": "cpu",
         "backend": "supertonic_sdk"
     },
     "read_blocks": [

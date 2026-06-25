@@ -4,6 +4,7 @@ import html
 import io
 import os
 import re
+import time
 import wave
 import threading
 import unicodedata
@@ -149,6 +150,7 @@ class SupertonicLightweightEngine(BaseTTSEngine):
                 print(f"[SupertonicLightweight] TTS入力: {japanese_text}")
                 import sherpa_onnx
 
+                started_at = time.perf_counter()
                 generation_config = sherpa_onnx.GenerationConfig()
                 generation_config.sid = int(target_speaker)
                 generation_config.num_steps = 8
@@ -159,6 +161,8 @@ class SupertonicLightweightEngine(BaseTTSEngine):
                     japanese_text,
                     generation_config,
                 )
+                elapsed = time.perf_counter() - started_at
+                print(f"[SupertonicLightweight] 生成時間: {elapsed:.3f}秒")
                 if not audio or not audio.samples:
                     raise RuntimeError("sherpa-onnx generated audio is empty")
 

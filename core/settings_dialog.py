@@ -359,6 +359,15 @@ class SettingsDialog(QObject):
         self.st_volume_spin: QDoubleSpinBox = self.dialog_window.findChild(QDoubleSpinBox, "supertonicVolumeDoubleSpinBox")
         self.st_steps_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicStepsSpinBox")
         self.st_max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicMaxLengthSpinBox")
+        self.st_device_combo: QComboBox = self.dialog_window.findChild(QComboBox, "supertonicDeviceComboBox")
+        self._setup_supertonic_devices()
+
+    def _setup_supertonic_devices(self) -> None:
+        from core.tts.engines.supertonic import SupertonicEngine
+
+        self.st_device_combo.clear()
+        for device_id, display_name in SupertonicEngine.available_devices():
+            self.st_device_combo.addItem(display_name, device_id)
 
     def _bind_read_block_widgets(self) -> None:
         self.read_block_scroll_area: QScrollArea = self.dialog_window.findChild(QScrollArea, "readBlockScrollArea")
@@ -487,12 +496,13 @@ class SettingsDialog(QObject):
             },
             "supertonic": {
                 "url": "local://supertonic",
-                "path": "",
+                "path": "models/supertonic-3",
                 "speaker_id": 0,
                 "speed": 1.0,
                 "volume": 1.0,
                 "max_length": 50,
                 "num_steps": 8,
+                "device": "cpu",
             }
         }
         self.current_active_engine = "voicevox"
@@ -601,12 +611,13 @@ class SettingsDialog(QObject):
         st_config = self.main_app.config.get("supertonic", {})
         supertonic = self.engine_settings["supertonic"]
         supertonic["url"] = "local://supertonic"
-        supertonic["path"] = ""
+        supertonic["path"] = st_config.get("path", "models/supertonic-3")
         supertonic["speaker_id"] = int(st_config.get("speaker_id", 0))
         supertonic["speed"] = float(st_config.get("speed", 1.0))
         supertonic["volume"] = float(st_config.get("volume", 1.0))
         supertonic["max_length"] = int(st_config.get("max_length", 50))
         supertonic["num_steps"] = int(st_config.get("num_steps", 8))
+        supertonic["device"] = st_config.get("device", "cpu")
 
         # VOICEVOX ウィジェットへの適用
         self.vv_url_line.setText(vv["url"])
@@ -650,6 +661,8 @@ class SettingsDialog(QObject):
         self.st_volume_spin.setValue(supertonic["volume"])
         self.st_steps_spin.setValue(supertonic["num_steps"])
         self.st_max_length_spin.setValue(supertonic["max_length"])
+        device_index = self.st_device_combo.findData(supertonic["device"])
+        self.st_device_combo.setCurrentIndex(device_index if device_index >= 0 else 0)
 
         # 画面のコントロールへ現在アクティブなエンジンの設定値を適用
         self._update_ui_for_active_engine()
@@ -749,6 +762,7 @@ class SettingsDialog(QObject):
             "volume": self.st_volume_spin.value(),
             "max_length": self.st_max_length_spin.value(),
             "num_steps": self.st_steps_spin.value(),
+            "device": self.st_device_combo.currentData(),
         })
 
         # config に保存
@@ -837,6 +851,7 @@ class SettingsDialog(QObject):
         self.st_volume_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         self.st_steps_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
         self.st_max_length_spin.valueChanged.connect(lambda _: self.settings_changed.emit())
+        self.st_device_combo.currentIndexChanged.connect(lambda _: self.settings_changed.emit())
         
         # ダウンロードボタン
         self.lightweight_st_download_button.clicked.connect(self.download_supertonic_lightweight_model)
@@ -1193,7 +1208,7 @@ class SettingsDialog(QObject):
             path = self.engine_settings["supertonic_lightweight"]["path"]
         elif self.current_active_engine == "supertonic":
             url = "local://supertonic"
-            path = ""
+            path = self.engine_settings["supertonic"]["path"]
         else:
             url = ""
             path = ""
@@ -1203,7 +1218,13 @@ class SettingsDialog(QObject):
             return
 
         engine_type = self._get_engine_key(self.tts_engine_combo.currentText())
-        self.main_app.ensure_tts_running(url, path, engine_type)
+        device = self.st_device_combo.currentData() if engine_type == "supertonic" else "cpu"
+
+        if engine_type == "supertonic":
+            self._start_supertonic_connection_test(url, path, engine_type, device)
+            return
+
+        self.main_app.ensure_tts_running(url, path, engine_type, device)
 
         try:
             speakers, speaker_data = self._fetch_speaker_data(url, path)
@@ -1223,6 +1244,84 @@ class SettingsDialog(QObject):
             self.main_app.append_log(" / ".join(lines) if lines else "speaker情報なし")
         except Exception as exc:
             self.main_app.show_error(f"接続に失敗しました: {exc}")
+
+    def _start_supertonic_connection_test(
+        self,
+        url: str,
+        path: str,
+        engine_type: str,
+        device: str,
+    ) -> None:
+        device_name = self.st_device_combo.currentText()
+        self.tts_test_button.setEnabled(False)
+        self.connection_progress = QProgressDialog(
+            f"{device_name}でモデルを初期化しています。\n初回は1～2分かかる場合があります。",
+            "",
+            0,
+            0,
+            self.dialog_window,
+        )
+        self.connection_progress.setWindowTitle("SUPERTONIC 3 接続確認")
+        self.connection_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.connection_progress.setCancelButton(None)
+        self.connection_progress.setMinimumDuration(0)
+        self.connection_progress.show()
+
+        self.main_app.test_tts_configuration(
+            {
+                "engine_type": engine_type,
+                "engine_config": self.engine_settings[engine_type],
+                "url": url,
+                "path": path,
+                "device": device,
+                "signature": (engine_type, url, path, device),
+            },
+            self._on_supertonic_connection_test_completed,
+        )
+
+    def _on_supertonic_connection_test_completed(
+        self,
+        success: bool,
+        error: str,
+    ) -> None:
+        self.connection_progress.close()
+        self.tts_test_button.setEnabled(True)
+
+        engine = self.main_app.tts_engine
+        if not success or engine is None:
+            detail = f"\n\n詳細: {error}" if error else ""
+            self.main_app.show_error(
+                f"SUPERTONIC 3の初期化に失敗しました。{detail}"
+            )
+            return
+
+        try:
+            speakers = engine.get_speakers() or []
+            speaker_data = self._convert_speakers(speakers)
+            if self._apply_speaker_data(speaker_data):
+                self.main_app.append_log("話者リストを更新しました。")
+
+            active_device = getattr(engine, "active_device", "")
+            self.main_app.append_log(
+                f"接続OK: {active_device or engine.DISPLAY_NAME}"
+            )
+        except Exception as exc:
+            self.main_app.show_error(f"話者情報の取得に失敗しました: {exc}")
+
+    @staticmethod
+    def _convert_speakers(
+        speakers: list[dict],
+    ) -> dict[str, list[tuple[str, int]]]:
+        speaker_data = {}
+        for speaker in speakers:
+            styles = [
+                (style.get("name", ""), style.get("id"))
+                for style in speaker.get("styles", [])
+                if style.get("name", "") and style.get("id") is not None
+            ]
+            if styles:
+                speaker_data[speaker.get("name", "")] = styles
+        return speaker_data
 
     def on_group_changed(self, new_group_name: str) -> None:
         if self._block_group_change_signal:

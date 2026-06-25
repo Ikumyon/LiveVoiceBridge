@@ -3,21 +3,39 @@ from __future__ import annotations
 import io
 import re
 import threading
+import time
 import unicodedata
 import wave
+from pathlib import Path
 
 import numpy as np
 
+from core.app_config import EXE_DIR
 from core.tts.base import BaseTTSEngine
 
 
 class SupertonicEngine(BaseTTSEngine):
     DISPLAY_NAME = "SUPERTONIC 3"
     DEFAULT_URL = "local://supertonic"
+    DEFAULT_MODEL_PATH = "models/supertonic-3"
     REQUIRES_URL = False
     IS_LOCAL_ENGINE = True
 
     VOICE_NAMES = ("M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5")
+
+    class _OpenVinoSession:
+        def __init__(self, model_path: Path, device: str):
+            import openvino as ov
+
+            core = ov.Core()
+            model = core.read_model(str(model_path))
+            self.compiled_model = core.compile_model(model, device)
+            self.outputs = list(self.compiled_model.outputs)
+
+        def run(self, output_names, input_feed):
+            result = self.compiled_model(input_feed)
+            return [np.asarray(result[output]) for output in self.outputs]
+
     @classmethod
     def migrate_config(cls, config: dict, loaded_config: dict) -> None:
         if "supertonic" not in config or not isinstance(config["supertonic"], dict):
@@ -25,17 +43,22 @@ class SupertonicEngine(BaseTTSEngine):
 
         supertonic = config["supertonic"]
         supertonic["url"] = cls.DEFAULT_URL
-        supertonic["path"] = ""
+        supertonic["path"] = cls.DEFAULT_MODEL_PATH
         supertonic.setdefault("speaker_id", 0)
         supertonic.setdefault("speed", 1.0)
         supertonic.setdefault("volume", 1.0)
         supertonic.setdefault("max_length", 50)
         supertonic.setdefault("num_steps", 8)
+        supertonic.setdefault("device", "cpu")
 
     def __init__(self, url: str, exe_path: str = ""):
         super().__init__(url or self.DEFAULT_URL, exe_path)
+        path = Path(exe_path or self.DEFAULT_MODEL_PATH)
+        self.model_dir = path if path.is_absolute() else EXE_DIR / path
         self._tts = None
         self.num_steps = 8
+        self.device = "cpu"
+        self.active_device = ""
         self.last_error = ""
         self._lock = threading.Lock()
 
@@ -48,7 +71,17 @@ class SupertonicEngine(BaseTTSEngine):
         try:
             from supertonic import TTS
 
-            self._tts = TTS(auto_download=True)
+            if self.device == "openvino_gpu":
+                self._tts = self._create_openvino_tts("GPU")
+                self.active_device = "OpenVINO GPU"
+            else:
+                self._tts = TTS(
+                    model="supertonic-3",
+                    model_dir=self.model_dir,
+                    auto_download=True,
+                )
+                self.active_device = "CPU"
+            print(f"[Supertonic] 実行デバイス: {self.active_device}")
             self.last_error = ""
             return True
         except Exception as exc:
@@ -56,6 +89,56 @@ class SupertonicEngine(BaseTTSEngine):
             self.last_error = str(exc)
             print(f"[Supertonic] 初期化失敗: {exc}")
             return False
+
+    def configure_device(self, device: str) -> None:
+        target = device if device in {"cpu", "openvino_gpu"} else "cpu"
+        if target != self.device:
+            self.terminate()
+            self.device = target
+
+    @staticmethod
+    def available_devices() -> list[tuple[str, str]]:
+        devices = [("cpu", "CPU")]
+        try:
+            import openvino as ov
+
+            if "GPU" in ov.Core().available_devices:
+                devices.append(("openvino_gpu", "OpenVINO GPU"))
+        except Exception:
+            pass
+        return devices
+
+    def _create_openvino_tts(self, device: str):
+        import onnxruntime as ort
+        import supertonic.core as supertonic_core
+        import supertonic.loader as supertonic_loader
+        from supertonic import TTS
+
+        model_dir = self.model_dir
+        if not supertonic_loader.has_all_onnx_modules(model_dir):
+            supertonic_loader.download_model(model_dir, "supertonic-3")
+
+        sessions = tuple(
+            self._OpenVinoSession(model_dir / relative_path, device)
+            for relative_path in supertonic_loader.get_all_onnx_module_relative_paths()
+        )
+
+        original_loader = supertonic_loader.load_onnx_modules
+        original_session_type = supertonic_core.ort.InferenceSession
+        try:
+            supertonic_loader.load_onnx_modules = lambda *args, **kwargs: sessions
+            supertonic_core.ort.InferenceSession = (
+                original_session_type,
+                self._OpenVinoSession,
+            )
+            return TTS(
+                model="supertonic-3",
+                model_dir=model_dir,
+                auto_download=False,
+            )
+        finally:
+            supertonic_loader.load_onnx_modules = original_loader
+            supertonic_core.ort.InferenceSession = original_session_type
 
     def synthesize_wav(
         self,
@@ -85,6 +168,7 @@ class SupertonicEngine(BaseTTSEngine):
             total_steps = int(getattr(self, "num_steps", 8))
 
             with self._lock:
+                started_at = time.perf_counter()
                 print(
                     f"[Supertonic] TTS入力: {normalized_text} "
                     f"(voice={voice_name}, lang=ja, steps={total_steps})"
@@ -98,6 +182,8 @@ class SupertonicEngine(BaseTTSEngine):
                     speed=target_speed,
                     verbose=False,
                 )
+                elapsed = time.perf_counter() - started_at
+                print(f"[Supertonic] 生成時間: {elapsed:.3f}秒")
 
             samples = np.asarray(wav, dtype=np.float32).squeeze()
             samples = np.clip(samples * target_volume, -1.0, 1.0)
@@ -143,3 +229,4 @@ class SupertonicEngine(BaseTTSEngine):
 
     def terminate(self) -> None:
         self._tts = None
+        self.active_device = ""

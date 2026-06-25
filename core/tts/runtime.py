@@ -15,6 +15,7 @@ def ensure_tts_running(
     set_status: Callable[[str], None],
     show_error: Callable[[str], None],
     process_events: Callable[[], None],
+    device: str = "cpu",
 ) -> tuple[BaseTTSEngine | None, bool]:
     engine_type = engine_type.lower()
     target_class = tts_factory.get_engine_class(engine_type)
@@ -30,6 +31,10 @@ def ensure_tts_running(
 
     if current_engine is None:
         current_engine = tts_factory.get_engine_instance(engine_type, url, path)
+
+    configure_device = getattr(current_engine, "configure_device", None)
+    if configure_device is not None:
+        configure_device(device)
 
     if current_engine.is_running():
         return current_engine, True
