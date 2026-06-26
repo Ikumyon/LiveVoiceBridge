@@ -39,7 +39,7 @@ def create_tts(model_dir: Path):
     from supertonic import TTS
 
     if not supertonic_loader.has_all_onnx_modules(model_dir):
-        supertonic_loader.download_model(model_dir, "supertonic-3")
+        raise FileNotFoundError(f"SUPERTONIC 3 model files are missing: {model_dir}")
 
     sessions = tuple(
         OpenVinoSession(model_dir / relative_path, OPENVINO_DEVICE)

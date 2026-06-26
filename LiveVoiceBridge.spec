@@ -5,7 +5,13 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('ui', 'ui'), ('assets', 'assets'), ('core/stream_list.proto', 'core')] + collect_data_files('pykakasi'),
+    datas=[
+        ('ui', 'ui'),
+        ('assets', 'assets'),
+        ('core/stream_list.proto', 'core'),
+        ('core/stream_list_pb2.py', 'core'),
+        ('core/stream_list_pb2_grpc.py', 'core'),
+    ] + collect_data_files('pykakasi'),
     hiddenimports=[
         'sherpa_onnx',
         'supertonic',

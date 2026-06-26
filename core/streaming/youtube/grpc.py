@@ -16,6 +16,12 @@ def ensure_grpc_files() -> None:
     if PB2_FILE.exists() and PB2_GRPC_FILE.exists():
         return
 
+    if getattr(sys, "frozen", False):
+        raise RuntimeError(
+            "gRPC用PythonファイルがEXEに同梱されていません。"
+            "stream_list_pb2.py と stream_list_pb2_grpc.py を含めてビルドしてください。"
+        )
+
     try:
         from grpc_tools import protoc
     except ImportError as exc:

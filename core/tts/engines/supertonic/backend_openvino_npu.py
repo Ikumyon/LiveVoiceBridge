@@ -69,7 +69,7 @@ def create_tts(model_dir: Path):
     from supertonic import TTS
 
     if not supertonic_loader.has_all_onnx_modules(model_dir):
-        supertonic_loader.download_model(model_dir, "supertonic-3")
+        raise FileNotFoundError(f"SUPERTONIC 3 model files are missing: {model_dir}")
 
     model_paths = [
         model_dir / relative_path

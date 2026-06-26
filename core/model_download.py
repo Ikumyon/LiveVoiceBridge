@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox
 )
 
-from core.app_config import EXE_DIR
+from core.app_config import EXE_DIR, EXTERNAL_LINK_ICON_FILE, X_ICON_FILE
 
 
 class ModelDownloadWorker(QThread):
@@ -44,7 +44,7 @@ class ModelDownloadWorker(QThread):
             temp_path = Path(temp_file.name)
             
             req = urllib.request.Request(self.download_url, headers={"User-Agent": "LiveVoiceBridge"})
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:
                 total_size = int(response.info().get("Content-Length", 0))
                 downloaded_size = 0
                 block_size = 8192
@@ -128,6 +128,7 @@ class ModelDownloader:
         
         self.download_worker.start()
         self.progress_dialog.exec()
+        self._cleanup_worker()
 
     def _show_license_dialog(self) -> bool:
         dialog = QDialog(self.parent_window)
@@ -153,10 +154,9 @@ class ModelDownloader:
         
         # 外部リンクを開くボタン
         link_btn = QPushButton(" ライセンスページを開く (ブラウザ)", dialog)
-        link_icon_path = os.path.join(EXE_DIR, "assets", "external-link.svg")
-        if os.path.exists(link_icon_path):
+        if EXTERNAL_LINK_ICON_FILE.exists():
             from core.ui.helpers import load_svg_icon
-            link_btn.setIcon(load_svg_icon(Path(link_icon_path), link_btn))
+            link_btn.setIcon(load_svg_icon(EXTERNAL_LINK_ICON_FILE, link_btn))
         layout.addWidget(link_btn)
         
         # 下部ボタンレイアウト
@@ -165,10 +165,9 @@ class ModelDownloader:
         download_btn.setEnabled(False)
         
         cancel_btn = QPushButton(" キャンセル", dialog)
-        cancel_icon_path = os.path.join(EXE_DIR, "assets", "x.svg")
-        if os.path.exists(cancel_icon_path):
+        if X_ICON_FILE.exists():
             from core.ui.helpers import load_svg_icon
-            cancel_btn.setIcon(load_svg_icon(Path(cancel_icon_path), cancel_btn))
+            cancel_btn.setIcon(load_svg_icon(X_ICON_FILE, cancel_btn))
         
         btn_layout.addWidget(download_btn)
         btn_layout.addWidget(cancel_btn)
@@ -194,6 +193,17 @@ class ModelDownloader:
         if self.progress_dialog:
             self.progress_dialog.setValue(percent)
             self.progress_dialog.setLabelText(message)
+
+    def _cleanup_worker(self) -> None:
+        if self.download_worker is None:
+            return
+        if self.download_worker.isRunning():
+            self.download_worker.cancel()
+            if not self.download_worker.wait(30000):
+                self.download_worker.terminate()
+                self.download_worker.wait()
+        self.download_worker.deleteLater()
+        self.download_worker = None
 
     def _on_download_finished(self, success: bool, message: str) -> None:
         if self.progress_dialog:

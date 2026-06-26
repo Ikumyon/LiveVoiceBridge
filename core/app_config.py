@@ -26,6 +26,8 @@ PIP_OFF_ICON_FILE = APP_DIR / "assets" / "picture-in-picture-2.svg"
 PIP_ON_ICON_FILE = APP_DIR / "assets" / "picture-in-picture.svg"
 TV_ICON_FILE = APP_DIR / "assets" / "tv.svg"
 PIP_ICON_FILE = PIP_OFF_ICON_FILE
+EXTERNAL_LINK_ICON_FILE = APP_DIR / "assets" / "external-link.svg"
+X_ICON_FILE = APP_DIR / "assets" / "x.svg"
 
 if getattr(sys, "frozen", False):
     EXE_DIR = Path(sys.executable).parent

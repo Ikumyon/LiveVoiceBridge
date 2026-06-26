@@ -34,6 +34,25 @@ class SupertonicEngine(BaseTTSEngine):
     DEFAULT_MODEL_PATH = "models/supertonic-3"
     REQUIRES_URL = False
     IS_LOCAL_ENGINE = True
+    REQUIRED_FILES = [
+        "config.json",
+        "onnx/duration_predictor.onnx",
+        "onnx/text_encoder.onnx",
+        "onnx/tts.json",
+        "onnx/unicode_indexer.json",
+        "onnx/vector_estimator.onnx",
+        "onnx/vocoder.onnx",
+        "voice_styles/M1.json",
+        "voice_styles/M2.json",
+        "voice_styles/M3.json",
+        "voice_styles/M4.json",
+        "voice_styles/M5.json",
+        "voice_styles/F1.json",
+        "voice_styles/F2.json",
+        "voice_styles/F3.json",
+        "voice_styles/F4.json",
+        "voice_styles/F5.json",
+    ]
 
     @classmethod
     def migrate_config(cls, config: dict, loaded_config: dict) -> None:
@@ -50,10 +69,23 @@ class SupertonicEngine(BaseTTSEngine):
         supertonic.setdefault("num_steps", 8)
         supertonic.setdefault("device", backend_cpu.DEVICE_ID)
 
+    @classmethod
+    def resolve_model_dir(cls, path_str: str = "") -> Path:
+        model_dir = Path(path_str or cls.DEFAULT_MODEL_PATH)
+        if not model_dir.is_absolute():
+            model_dir = EXE_DIR / model_dir
+        return model_dir
+
+    @classmethod
+    def has_model_files(cls, path_str: str = "") -> bool:
+        model_dir = cls.resolve_model_dir(path_str)
+        if not model_dir.exists() or not model_dir.is_dir():
+            return False
+        return all((model_dir / name).exists() for name in cls.REQUIRED_FILES)
+
     def __init__(self, url: str, exe_path: str = ""):
         super().__init__(url or self.DEFAULT_URL, exe_path)
-        path = Path(exe_path or self.DEFAULT_MODEL_PATH)
-        self.model_dir = path if path.is_absolute() else EXE_DIR / path
+        self.model_dir = self.resolve_model_dir(exe_path)
         self._tts = None
         self.num_steps = 8
         self.device = backend_cpu.DEVICE_ID
@@ -67,6 +99,9 @@ class SupertonicEngine(BaseTTSEngine):
     def ensure_running(self) -> bool:
         if self._tts is not None:
             return True
+        if not self.has_model_files(str(self.model_dir)):
+            self.last_error = f"SUPERTONIC 3 model files are missing: {self.model_dir}"
+            return False
         try:
             backend = BACKENDS[self.device]
             self._tts = backend.create_tts(self.model_dir)

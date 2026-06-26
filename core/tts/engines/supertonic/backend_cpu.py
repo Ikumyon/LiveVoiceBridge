@@ -17,5 +17,5 @@ def create_tts(model_dir: Path):
     return TTS(
         model="supertonic-3",
         model_dir=model_dir,
-        auto_download=True,
+        auto_download=False,
     )

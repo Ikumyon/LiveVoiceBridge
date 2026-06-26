@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
 )
 
-from core.app_config import SETTINGS_UI_FILE, EXE_DIR
+from core.app_config import SETTINGS_UI_FILE, EXE_DIR, EXTERNAL_LINK_ICON_FILE
 from core.comment_processing import normalize_read_blocks
 
 # 循環参照を防ぐためにTYPE_CHECKINGを使用
@@ -53,6 +53,8 @@ from core.speakers.utils import SPEAKER_GROUP_ORDER, group_speakers_by_kana, spe
 
 from core.ui.delegates import HiraganaDelegate
 from core.ui.read_blocks import PlaceholderFrame, ReadBlockFrame
+from core.tts.engines.supertonic import SupertonicEngine
+from core.tts.engines.supertonic_lightweight import SupertonicLightweightEngine
 
 
 class SettingsDialog(QObject):
@@ -103,10 +105,9 @@ class SettingsDialog(QObject):
 
         # APIキーボタンの設定
         if self.api_key_btn:
-            icon_path = os.path.join(EXE_DIR, "assets", "external-link.svg")
-            if os.path.exists(icon_path):
+            if EXTERNAL_LINK_ICON_FILE.exists():
                 from core.ui.helpers import load_svg_icon
-                self.api_key_btn.setIcon(load_svg_icon(Path(icon_path), self.api_key_btn))
+                self.api_key_btn.setIcon(load_svg_icon(EXTERNAL_LINK_ICON_FILE, self.api_key_btn))
             
             self.api_key_btn.clicked.connect(
                 lambda: QDesktopServices.openUrl(
@@ -170,6 +171,7 @@ class SettingsDialog(QObject):
         self.st_steps_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicStepsSpinBox")
         self.st_max_length_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "supertonicMaxLengthSpinBox")
         self.st_device_combo: QComboBox = self.dialog_window.findChild(QComboBox, "supertonicDeviceComboBox")
+        self.st_download_button: QPushButton = self.dialog_window.findChild(QPushButton, "supertonicDownloadButton")
         self._setup_supertonic_devices()
 
     def _setup_supertonic_devices(self) -> None:
@@ -327,6 +329,74 @@ class SettingsDialog(QObject):
             return "SUPERTONIC 3"
         return key.upper()
 
+    def _lightweight_model_available(self) -> bool:
+        path = self.engine_settings["supertonic_lightweight"].get("path", "")
+        return SupertonicLightweightEngine.has_model_files(path)
+
+    def _supertonic_model_available(self) -> bool:
+        path = self.engine_settings["supertonic"].get("path", "")
+        return SupertonicEngine.has_model_files(path)
+
+    def _refresh_lightweight_model_selection(self) -> None:
+        model_available = self._lightweight_model_available()
+        is_active = self.current_active_engine == "supertonic_lightweight"
+
+        for widget in (
+            self.lightweight_st_speed_spin,
+            self.lightweight_st_volume_spin,
+            self.lightweight_st_max_length_spin,
+        ):
+            widget.setEnabled(model_available)
+
+        if self.lightweight_st_download_button:
+            self.lightweight_st_download_button.setEnabled(not model_available)
+        if is_active:
+            self.speaker_button.setEnabled(model_available)
+            self.tts_test_button.setEnabled(model_available)
+        else:
+            self.speaker_button.setEnabled(True)
+            self.tts_test_button.setEnabled(True)
+
+        lightweight_index = self.tts_engine_combo.findText(self._get_engine_display_name("supertonic_lightweight"))
+        if lightweight_index < 0:
+            return
+
+        if model_available:
+            self.tts_engine_combo.setItemData(
+                lightweight_index,
+                "",
+                Qt.ItemDataRole.ToolTipRole,
+            )
+            return
+
+        self.tts_engine_combo.setItemData(
+            lightweight_index,
+            "モデル未ダウンロードのため、設定変更と接続テストはできません。ダウンロードボタンからモデルを取得してください。",
+            Qt.ItemDataRole.ToolTipRole,
+        )
+
+    def _refresh_supertonic_model_selection(self) -> None:
+        model_available = self._supertonic_model_available()
+        is_active = self.current_active_engine == "supertonic"
+
+        for widget in (
+            self.st_speed_spin,
+            self.st_volume_spin,
+            self.st_steps_spin,
+            self.st_max_length_spin,
+            self.st_device_combo,
+        ):
+            widget.setEnabled(model_available)
+
+        if self.st_download_button:
+            self.st_download_button.setEnabled(not model_available)
+        if is_active:
+            self.speaker_button.setEnabled(model_available)
+            self.tts_test_button.setEnabled(model_available)
+        elif self.current_active_engine != "supertonic_lightweight":
+            self.speaker_button.setEnabled(True)
+            self.tts_test_button.setEnabled(True)
+
     def _update_ui_for_active_engine(self) -> None:
         # アクティブなエンジンのパラメータを共通ウィジェットへロード
         active_config = self.engine_settings[self.current_active_engine]
@@ -348,6 +418,8 @@ class SettingsDialog(QObject):
             self.tts_engine_stacked.setCurrentWidget(self.supertonic_lightweight_page)
         elif self.current_active_engine == "supertonic":
             self.tts_engine_stacked.setCurrentWidget(self.supertonic_page)
+        self._refresh_lightweight_model_selection()
+        self._refresh_supertonic_model_selection()
 
     def load_settings(self) -> None:
         env_key = os.environ.get("YOUTUBE_API_KEY", "")
@@ -463,6 +535,8 @@ class SettingsDialog(QObject):
         self.st_max_length_spin.setValue(supertonic["max_length"])
         device_index = self.st_device_combo.findData(supertonic["device"])
         self.st_device_combo.setCurrentIndex(device_index if device_index >= 0 else 0)
+        self._refresh_lightweight_model_selection()
+        self._refresh_supertonic_model_selection()
 
         # 画面のコントロールへ現在アクティブなエンジンの設定値を適用
         self._update_ui_for_active_engine()
@@ -744,6 +818,7 @@ class SettingsDialog(QObject):
         
         # ダウンロードボタン
         self.lightweight_st_download_button.clicked.connect(self.download_supertonic_lightweight_model)
+        self.st_download_button.clicked.connect(self.download_supertonic_model)
 
         # 読み替え辞書シグナル
         self.add_word_button.clicked.connect(self.add_word_row)
@@ -1439,3 +1514,14 @@ class SettingsDialog(QObject):
         from core.model_download import ModelDownloader
         self.downloader = ModelDownloader(self.dialog_window, self.engine_settings, self.settings_changed)
         self.downloader.start()
+        self._refresh_lightweight_model_selection()
+
+    def download_supertonic_model(self) -> None:
+        from core.supertonic_model_download import SupertonicModelDownloader
+        self.supertonic_downloader = SupertonicModelDownloader(
+            self.dialog_window,
+            self.engine_settings,
+            self.settings_changed,
+        )
+        self.supertonic_downloader.start()
+        self._refresh_supertonic_model_selection()

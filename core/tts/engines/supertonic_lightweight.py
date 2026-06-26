@@ -51,13 +51,24 @@ class SupertonicLightweightEngine(BaseTTSEngine):
         "voice.bin",
     ]
 
+    @classmethod
+    def resolve_model_dir(cls, path_str: str = "") -> Path:
+        model_dir = Path(path_str or cls.DEFAULT_MODEL_PATH)
+        if not model_dir.is_absolute():
+            model_dir = EXE_DIR / model_dir
+        return model_dir
+
+    @classmethod
+    def has_model_files(cls, path_str: str = "") -> bool:
+        model_dir = cls.resolve_model_dir(path_str)
+        if not model_dir.exists() or not model_dir.is_dir():
+            return False
+        return all((model_dir / name).exists() for name in cls.REQUIRED_FILES)
+
     def __init__(self, url: str, exe_path: str = ""):
         super().__init__(url or self.DEFAULT_URL, exe_path)
         # 指定されたモデルパス。相対パスの場合は実行ファイル（EXE_DIR）からの相対パスとして解決
-        path_str = exe_path or self.DEFAULT_MODEL_PATH
-        self.model_dir = Path(path_str)
-        if not self.model_dir.is_absolute():
-            self.model_dir = EXE_DIR / self.model_dir
+        self.model_dir = self.resolve_model_dir(exe_path)
 
         self._tts = None
         self.last_error = ""
@@ -75,11 +86,7 @@ class SupertonicLightweightEngine(BaseTTSEngine):
 
     def _check_model_files(self) -> bool:
         """必要なファイルがすべて揃っているか確認。"""
-        if not self.model_dir.exists() or not self.model_dir.is_dir():
-            return False
-        return all(
-            (self.model_dir / name).exists() for name in self.REQUIRED_FILES
-        )
+        return self.has_model_files(str(self.model_dir))
 
     def _load_tts(self) -> bool:
         """sherpa_onnx の TTS インスタンスを生成して保持する。"""
