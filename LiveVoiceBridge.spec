@@ -6,7 +6,17 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('ui', 'ui'), ('assets', 'assets'), ('core/stream_list.proto', 'core')] + collect_data_files('pykakasi'),
-    hiddenimports=[],
+    hiddenimports=[
+        'sherpa_onnx',
+        'supertonic',
+        'onnxruntime',
+        'openvino',
+        'soundfile',
+        'numpy',
+        'pyopenjtalk',
+        'pykakasi',
+        'emoji'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -34,5 +44,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/icon.ico',
 )
 

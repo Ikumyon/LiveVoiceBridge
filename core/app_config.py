@@ -43,6 +43,8 @@ DEFAULT_CONFIG = {
     "dict_group": "デフォルト",
     "use_ime": False,
     "comment_opacity": 0.8,
+    "comment_header_opacity": 0.8,
+    "comment_border_opacity": 0.8,
     "comment_bg_color": "#1e1e1e",
     "comment_border_color": "#3c3c3c",
     "check_updates": True,

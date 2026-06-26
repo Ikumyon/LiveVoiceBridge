@@ -7,8 +7,8 @@ import urllib.request
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QMimeData, QObject, QPoint, QRegularExpression, Signal, Qt, QThread
-from PySide6.QtGui import QAction, QDrag, QRegularExpressionValidator, QColor
+from PySide6.QtCore import QFile, QMimeData, QObject, QPoint, QRegularExpression, Signal, Qt, QThread, QUrl
+from PySide6.QtGui import QAction, QDrag, QRegularExpressionValidator, QColor, QIcon, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
@@ -51,83 +51,6 @@ if TYPE_CHECKING:
 import core.dictionary as dictionary
 import core.tts.factory as tts_factory
 from core.speakers.utils import SPEAKER_GROUP_ORDER, group_speakers_by_kana, speaker_sort_key
-
-
-class ModelDownloadWorker(QThread):
-    progress = Signal(int, str)  # 進捗率 (%), メッセージ
-    finished = Signal(bool, str) # 成功したか, メッセージ
-
-    def __init__(self, download_url: str, dest_dir: Path):
-        super().__init__()
-        self.download_url = download_url
-        self.dest_dir = dest_dir
-        self._is_cancelled = False
-
-    def cancel(self):
-        self._is_cancelled = True
-
-    def run(self):
-        try:
-            self.progress.emit(0, "ダウンロード中...")
-            
-            # 一時ファイルへダウンロード
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".tar.bz2")
-            temp_file.close()
-            temp_path = Path(temp_file.name)
-            
-            req = urllib.request.Request(self.download_url, headers={"User-Agent": "LiveVoiceBridge"})
-            with urllib.request.urlopen(req) as response:
-                total_size = int(response.info().get("Content-Length", 0))
-                downloaded_size = 0
-                block_size = 8192
-                
-                with open(temp_path, "wb") as f:
-                    while True:
-                        if self._is_cancelled:
-                            self.finished.emit(False, "キャンセルされました。")
-                            try:
-                                temp_path.unlink(missing_ok=True)
-                            except Exception:
-                                pass
-                            return
-                            
-                        buffer = response.read(block_size)
-                        if not buffer:
-                            break
-                        f.write(buffer)
-                        downloaded_size += len(buffer)
-                        if total_size > 0:
-                            pct = int((downloaded_size / total_size) * 80)
-                            self.progress.emit(pct, f"ダウンロード中... ({downloaded_size // 1024} KB / {total_size // 1024} KB)")
-            
-            self.progress.emit(80, "アーカイブを展開中...")
-            if self._is_cancelled:
-                self.finished.emit(False, "キャンセルされました。")
-                temp_path.unlink(missing_ok=True)
-                return
-                
-            self.dest_dir.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(temp_path, "r:bz2") as tar:
-                members = tar.getmembers()
-                total_members = len(members)
-                for idx, member in enumerate(members):
-                    if self._is_cancelled:
-                        self.finished.emit(False, "キャンセルされました。")
-                        temp_path.unlink(missing_ok=True)
-                        return
-                    
-                    tar.extract(member, path=self.dest_dir)
-                    
-                    if total_members > 0:
-                        pct = 80 + int((idx / total_members) * 20)
-                        self.progress.emit(pct, f"展開中... ({idx} / {total_members})")
-            
-            temp_path.unlink(missing_ok=True)
-            self.progress.emit(100, "完了しました。")
-            self.finished.emit(True, "モデルのダウンロードと配置が完了しました。")
-            
-        except Exception as e:
-            self.finished.emit(False, f"エラーが発生しました: {e}")
 
 
 class HiraganaDelegate(QStyledItemDelegate):
@@ -303,6 +226,46 @@ class SettingsDialog(QObject):
         self.tts_test_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsTestButton")
         self.button_box: QDialogButtonBox = self.dialog_window.findChild(QDialogButtonBox, "buttonBox")
 
+        # APIキー取得用ボタンを動的に追加
+        from PySide6.QtWidgets import QGroupBox
+        youtube_group_box: QGroupBox = self.dialog_window.findChild(QGroupBox, "youtubeGroupBox")
+        if youtube_group_box and self.api_key_line:
+            layout = youtube_group_box.layout()
+            if layout:
+                # 既存の api_key_line をレイアウトから取り除く
+                layout.removeWidget(self.api_key_line)
+                
+                # 横並びレイアウトを作成
+                h_layout = QHBoxLayout()
+                h_layout.setContentsMargins(0, 0, 0, 0)
+                h_layout.setSpacing(4)
+                
+                # 入力欄を追加
+                h_layout.addWidget(self.api_key_line)
+                
+                # ボタンを作成
+                self.api_key_btn = QToolButton(youtube_group_box)
+                self.api_key_btn.setToolTip("APIキーの取得先 (Google Cloud Console) をブラウザで開く")
+                self.api_key_btn.setAutoRaise(True)
+                
+                # アイコン設定
+                icon_path = os.path.join(EXE_DIR, "assets", "external-link.svg")
+                if os.path.exists(icon_path):
+                    from core.ui.helpers import load_svg_icon
+                    self.api_key_btn.setIcon(load_svg_icon(Path(icon_path), self.api_key_line))
+                
+                h_layout.addWidget(self.api_key_btn)
+                
+                # 元の grid_layout の row=0, column=1, colspan=3 に h_layout を配置
+                layout.addLayout(h_layout, 0, 1, 1, 3)
+                
+                # クリックイベントの接続
+                self.api_key_btn.clicked.connect(
+                    lambda: QDesktopServices.openUrl(
+                        QUrl("https://console.cloud.google.com/apis/library/youtube.googleapis.com")
+                    )
+                )
+
     def _bind_tts_page_widgets(self) -> None:
         # StackedWidget とページのバインド
         self.tts_engine_stacked: QStackedWidget = self.dialog_window.findChild(QStackedWidget, "ttsEngineStackedWidget")
@@ -420,6 +383,10 @@ class SettingsDialog(QObject):
         # UIからPiP設定ウィジェットを取得
         self.opacity_slider: QSlider = self.dialog_window.findChild(QSlider, "opacitySlider")
         self.opacity_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "opacitySpinBox")
+        self.header_opacity_slider: QSlider = self.dialog_window.findChild(QSlider, "headerOpacitySlider")
+        self.header_opacity_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "headerOpacitySpinBox")
+        self.border_opacity_slider: QSlider = self.dialog_window.findChild(QSlider, "borderOpacitySlider")
+        self.border_opacity_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "borderOpacitySpinBox")
         self.bg_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "bgColorButton")
         self.border_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "borderColorButton")
 
@@ -686,6 +653,14 @@ class SettingsDialog(QObject):
         self.opacity_slider.setValue(opacity)
         self.opacity_spin.setValue(opacity)
 
+        header_opacity = int(self.main_app.config.get("comment_header_opacity", 0.8) * 100)
+        self.header_opacity_slider.setValue(header_opacity)
+        self.header_opacity_spin.setValue(header_opacity)
+
+        border_opacity = int(self.main_app.config.get("comment_border_opacity", 0.8) * 100)
+        self.border_opacity_slider.setValue(border_opacity)
+        self.border_opacity_spin.setValue(border_opacity)
+
         self.bg_color_hex = self.main_app.config.get("comment_bg_color", "#1e1e1e")
         self.border_color_hex = self.main_app.config.get("comment_border_color", "#3c3c3c")
         self.update_color_button_style(self.bg_color_button, self.bg_color_hex)
@@ -771,6 +746,8 @@ class SettingsDialog(QObject):
             self.main_app.config["dict_group"] = active_group
 
         self.main_app.config["comment_opacity"] = self.opacity_slider.value() / 100.0
+        self.main_app.config["comment_header_opacity"] = self.header_opacity_slider.value() / 100.0
+        self.main_app.config["comment_border_opacity"] = self.border_opacity_slider.value() / 100.0
         self.main_app.config["comment_bg_color"] = self.bg_color_hex
         self.main_app.config["comment_border_color"] = self.border_color_hex
         
@@ -853,6 +830,15 @@ class SettingsDialog(QObject):
         self.opacity_slider.valueChanged.connect(self.opacity_spin.setValue)
         self.opacity_spin.valueChanged.connect(self.opacity_slider.setValue)
         self.opacity_slider.valueChanged.connect(self.on_opacity_slider_changed)
+
+        self.header_opacity_slider.valueChanged.connect(self.header_opacity_spin.setValue)
+        self.header_opacity_spin.valueChanged.connect(self.header_opacity_slider.setValue)
+        self.header_opacity_slider.valueChanged.connect(lambda _: self.settings_changed.emit())
+
+        self.border_opacity_slider.valueChanged.connect(self.border_opacity_spin.setValue)
+        self.border_opacity_spin.valueChanged.connect(self.border_opacity_slider.setValue)
+        self.border_opacity_slider.valueChanged.connect(lambda _: self.settings_changed.emit())
+
         self.bg_color_button.clicked.connect(self.select_bg_color)
         self.border_color_button.clicked.connect(self.select_border_color)
         self.tts_engine_combo.currentTextChanged.connect(self.on_tts_engine_changed)
@@ -1327,19 +1313,19 @@ class SettingsDialog(QObject):
     def display_words_for_group(self) -> None:
         self._block_group_change_signal = True
         self.word_table.blockSignals(True)
+        self.word_table.setUpdatesEnabled(False)
         self.word_table.setRowCount(0)
         
         group_name = self.group_combo.currentText()
         if group_name and group_name in self.word_dict:
             words = self.word_dict[group_name]
-            for item in words:
-                row = self.word_table.rowCount()
-                self.word_table.insertRow(row)
-                
+            self.word_table.setRowCount(len(words))
+            for row, item in enumerate(words):
                 self.word_table.setItem(row, 0, QTableWidgetItem(item.get("reading", "")))
                 self.word_table.setItem(row, 1, QTableWidgetItem(item.get("word", "")))
                 self.word_table.setItem(row, 2, QTableWidgetItem(item.get("pos", "名詞")))
                 self.word_table.setItem(row, 3, QTableWidgetItem(item.get("comment", "")))
+        self.word_table.setUpdatesEnabled(True)
         self.word_table.blockSignals(False)
         self._block_group_change_signal = False
 
@@ -1398,15 +1384,18 @@ class SettingsDialog(QObject):
         try:
             imported_words = dictionary.load_import_word_list(file_path)
             self.word_table.blockSignals(True)
+            self.word_table.setUpdatesEnabled(False)
 
-            for item in imported_words:
-                row = self.word_table.rowCount()
-                self.word_table.insertRow(row)
+            start_row = self.word_table.rowCount()
+            self.word_table.setRowCount(start_row + len(imported_words))
+            for i, item in enumerate(imported_words):
+                row = start_row + i
                 self.word_table.setItem(row, 0, QTableWidgetItem(item.get("reading", "")))
                 self.word_table.setItem(row, 1, QTableWidgetItem(item.get("word", "")))
                 self.word_table.setItem(row, 2, QTableWidgetItem(item.get("pos", "名詞")))
                 self.word_table.setItem(row, 3, QTableWidgetItem(item.get("comment", "")))
             
+            self.word_table.setUpdatesEnabled(True)
             self.word_table.blockSignals(False)
             imported_count = len(imported_words)
             if imported_count > 0:
@@ -1520,46 +1509,6 @@ class SettingsDialog(QObject):
         return merged
 
     def download_supertonic_lightweight_model(self) -> None:
-        download_url = (
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
-            "sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"
-        )
-        # アーカイブ内のモデルディレクトリを models/ 配下へ展開する
-        dest_dir = EXE_DIR / "models"
-        
-        # 進捗ダイアログの作成
-        self.progress_dialog = QProgressDialog("モデルのダウンロード準備中...", "キャンセル", 0, 100, self.dialog_window)
-        self.progress_dialog.setWindowTitle("モデルのダウンロード/更新")
-        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress_dialog.setAutoClose(True)
-        
-        # Worker スレッドの作成と開始
-        self.download_worker = ModelDownloadWorker(download_url, dest_dir)
-        self.download_worker.progress.connect(self.on_download_progress)
-        self.download_worker.finished.connect(self.on_download_finished)
-        
-        # キャンセルボタンが押された時の処理
-        self.progress_dialog.canceled.connect(self.download_worker.cancel)
-        
-        self.download_worker.start()
-        self.progress_dialog.exec()
-
-    def on_download_progress(self, percent: int, message: str) -> None:
-        if hasattr(self, "progress_dialog") and self.progress_dialog:
-            self.progress_dialog.setValue(percent)
-            self.progress_dialog.setLabelText(message)
-
-    def on_download_finished(self, success: bool, message: str) -> None:
-        if hasattr(self, "progress_dialog") and self.progress_dialog:
-            self.progress_dialog.close()
-            
-        if success:
-            QMessageBox.information(self.dialog_window, "完了", message)
-            model_path_rel = "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
-            self.engine_settings["supertonic_lightweight"]["path"] = model_path_rel
-            self.settings_changed.emit()
-        else:
-            if "キャンセル" in message:
-                QMessageBox.information(self.dialog_window, "キャンセル", message)
-            else:
-                QMessageBox.critical(self.dialog_window, "エラー", message)
+        from core.model_download import ModelDownloader
+        self.downloader = ModelDownloader(self.dialog_window, self.engine_settings, self.settings_changed)
+        self.downloader.start()

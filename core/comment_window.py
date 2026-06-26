@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QEvent
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QColor
 
@@ -29,8 +29,10 @@ class CommentWindow(QWidget):
         # 背景透過を有効化
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
-        # 不透明度の設定初期値
-        self.opacity = self.main_app.config.get("comment_opacity", 0.8)
+        # 各種不透明度の設定初期値
+        self._opacity = self.main_app.config.get("comment_opacity", 0.8)
+        self._header_opacity = self.main_app.config.get("comment_header_opacity", 0.8)
+        self._border_opacity = self.main_app.config.get("comment_border_opacity", 0.8)
 
         # ドラッグ移動用の位置保持
         self._drag_pos = QPoint()
@@ -87,22 +89,150 @@ class CommentWindow(QWidget):
 
         self._main_layout.addWidget(self.header_bar)
 
+        self.setMouseTracking(True)
+        self.header_bar.setMouseTracking(True)
+        self.header_bar.installEventFilter(self)
+        self._resize_dir = None
+        self._start_geometry = None
+        self._start_mouse_pos = None
+        self.BORDER_WIDTH = 8
+        self.update_header_style()
+
     def attach_list_widget(self, list_widget: QWidget) -> None:
         """QListWidget をこのウィンドウのレイアウトに組み込む。"""
         self._main_layout.addWidget(list_widget)
+        list_widget.setMouseTracking(True)
+        list_widget.installEventFilter(self)
 
     def detach_list_widget(self, list_widget: QWidget) -> None:
         """QListWidget をこのウィンドウのレイアウトから取り外す。"""
+        list_widget.removeEventFilter(self)
         self._main_layout.removeWidget(list_widget)
         list_widget.setParent(None)
 
     def close_popout(self) -> None:
         self.main_app.set_comment_popout(False)
 
+    @property
+    def opacity(self) -> float:
+        return self._opacity
+
+    @opacity.setter
+    def opacity(self, value: float) -> None:
+        self._opacity = value
+        self.update()
+
+    @property
+    def header_opacity(self) -> float:
+        return self._header_opacity
+
+    @header_opacity.setter
+    def header_opacity(self, value: float) -> None:
+        self._header_opacity = value
+        self.update_header_style()
+
+    @property
+    def border_opacity(self) -> float:
+        return self._border_opacity
+
+    @border_opacity.setter
+    def border_opacity(self, value: float) -> None:
+        self._border_opacity = value
+        self.update()
+
+    def update_header_style(self) -> None:
+        alpha = int(self._header_opacity * 255)
+        self.header_bar.setStyleSheet(f"""
+            QWidget#headerBar {{
+                background-color: rgba(20, 20, 20, {alpha});
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }}
+        """)
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.MouseMove:
+            local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            self.handle_mouse_move(local_pos, event.globalPosition().toPoint())
+            if self._resize_dir:
+                return True
+        elif event.type() == QEvent.Type.MouseButtonPress:
+            local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            if self.handle_mouse_press(local_pos, event.globalPosition().toPoint(), event.button()):
+                return True
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            if self.handle_mouse_release(event.button()):
+                return True
+        return super().eventFilter(obj, event)
+
+    def handle_mouse_move(self, local_pos: QPoint, global_pos: QPoint) -> None:
+        if self._resize_dir:
+            delta = global_pos - self._start_mouse_pos
+            new_geom = self._start_geometry
+            w = new_geom.width()
+            h = new_geom.height()
+            
+            if "right" in self._resize_dir:
+                w = max(200, new_geom.width() + delta.x())
+            if "bottom" in self._resize_dir:
+                h = max(200, new_geom.height() + delta.y())
+                
+            self.resize(w, h)
+            self.update()
+        else:
+            on_right = local_pos.x() >= self.width() - self.BORDER_WIDTH
+            on_bottom = local_pos.y() >= self.height() - self.BORDER_WIDTH
+            
+            if on_right and on_bottom:
+                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            elif on_right:
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+            elif on_bottom:
+                self.setCursor(Qt.CursorShape.SizeVerCursor)
+            else:
+                self.unsetCursor()
+
+    def handle_mouse_press(self, local_pos: QPoint, global_pos: QPoint, button: Qt.MouseButton) -> bool:
+        if button == Qt.MouseButton.LeftButton:
+            on_right = local_pos.x() >= self.width() - self.BORDER_WIDTH
+            on_bottom = local_pos.y() >= self.height() - self.BORDER_WIDTH
+            
+            direction = ""
+            if on_bottom:
+                direction += "bottom"
+            if on_right:
+                direction += "_right" if direction else "right"
+                
+            if direction:
+                self._resize_dir = direction
+                self._start_geometry = self.geometry()
+                self._start_mouse_pos = global_pos
+                return True
+        return False
+
+    def handle_mouse_release(self, button: Qt.MouseButton) -> bool:
+        if button == Qt.MouseButton.LeftButton and self._resize_dir:
+            self._resize_dir = None
+            self._start_geometry = None
+            self._start_mouse_pos = None
+            
+            # サイズ変更後の値をconfigに保存
+            geo = self.geometry()
+            self.main_app.config["comment_win_w"] = geo.width()
+            self.main_app.config["comment_win_h"] = geo.height()
+            self.main_app.save_config()
+            return True
+        return False
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        """ヘッダーバーをドラッグしたときのみ移動を開始する。"""
+        local_pos = event.position().toPoint()
+        global_pos = event.globalPosition().toPoint()
+        
+        if self.handle_mouse_press(local_pos, global_pos, event.button()):
+            event.accept()
+            return
+            
         if event.button() == Qt.MouseButton.LeftButton:
-            # クリック位置がヘッダーバーの範囲内にあるか判定
             if self.header_bar.rect().contains(self.header_bar.mapFromGlobal(event.globalPosition().toPoint())):
                 self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 event.accept()
@@ -110,15 +240,22 @@ class CommentWindow(QWidget):
                 event.ignore()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        """ウィンドウを移動させる。"""
-        if event.buttons() == Qt.MouseButton.LeftButton and not self._drag_pos.isNull():
+        local_pos = event.position().toPoint()
+        global_pos = event.globalPosition().toPoint()
+        
+        self.handle_mouse_move(local_pos, global_pos)
+        
+        if not self._resize_dir and event.buttons() == Qt.MouseButton.LeftButton and not self._drag_pos.isNull():
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
         else:
-            event.ignore()
+            event.accept()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        """ドラッグ状態をクリア。"""
+        if self.handle_mouse_release(event.button()):
+            event.accept()
+            return
+            
         self._drag_pos = QPoint()
         event.accept()
 
@@ -130,12 +267,13 @@ class CommentWindow(QWidget):
         # 背景の描画 (configのHEXカラーをQColorにして不透明度アルファ値を適用)
         bg_hex = self.main_app.config.get("comment_bg_color", "#1e1e1e")
         bg_color = QColor(bg_hex)
-        bg_color.setAlpha(int(self.opacity * 255))
+        bg_color.setAlpha(int(self._opacity * 255))
         painter.fillRect(self.rect(), bg_color)
 
         # 縁（境界線）の描画
         border_hex = self.main_app.config.get("comment_border_color", "#3c3c3c")
         border_color = QColor(border_hex)
+        border_color.setAlpha(int(self._border_opacity * 255))
         painter.setPen(border_color)
         painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
 

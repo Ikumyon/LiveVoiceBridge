@@ -525,9 +525,7 @@ class LiveVoiceBridgeApp(QObject):
                 painter.end()
                 icon_label.setPixmap(pixmap)
             except Exception:
-                icon_label.setText("📺")
-        else:
-            icon_label.setText("📺")
+                pass
 
         text_label = QLabel("別ウィンドウで表示中")
         text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -547,6 +545,9 @@ class LiveVoiceBridgeApp(QObject):
         # PiPウィンドウを生成して QListWidget を渡す
         if self.comment_window is None:
             self.comment_window = CommentWindow(self)
+        self.comment_window.opacity = self.config.get("comment_opacity", 0.8)
+        self.comment_window.header_opacity = self.config.get("comment_header_opacity", 0.8)
+        self.comment_window.border_opacity = self.config.get("comment_border_opacity", 0.8)
         self.comment_window.attach_list_widget(self.comment_list)
 
         # 保存済みの位置・サイズがあれば復元
@@ -737,6 +738,8 @@ class LiveVoiceBridgeApp(QObject):
 
         if self.comment_window is not None:
             self.comment_window.opacity = dialog.opacity_slider.value() / 100.0
+            self.comment_window.header_opacity = dialog.header_opacity_slider.value() / 100.0
+            self.comment_window.border_opacity = dialog.border_opacity_slider.value() / 100.0
             self.config["comment_bg_color"] = dialog.bg_color_hex
             self.config["comment_border_color"] = dialog.border_color_hex
             self.comment_window.update()
@@ -760,6 +763,8 @@ class LiveVoiceBridgeApp(QObject):
 
         if self.comment_window is not None:
             self.comment_window.opacity = backup_config.get("comment_opacity", 0.8)
+            self.comment_window.header_opacity = backup_config.get("comment_header_opacity", 0.8)
+            self.comment_window.border_opacity = backup_config.get("comment_border_opacity", 0.8)
             self.config["comment_bg_color"] = backup_config.get("comment_bg_color", "#1e1e1e")
             self.config["comment_border_color"] = backup_config.get("comment_border_color", "#3c3c3c")
             self.comment_window.update()
