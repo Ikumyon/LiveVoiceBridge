@@ -50,14 +50,43 @@
            </widget>
           </item>
           <item row="0" column="1" colspan="3">
-           <widget class="QLineEdit" name="apiKeyLineEdit">
-            <property name="echoMode">
-             <enum>QLineEdit::EchoMode::Password</enum>
+           <layout class="QHBoxLayout" name="apiKeyLayout">
+            <property name="spacing">
+             <number>4</number>
             </property>
-            <property name="placeholderText">
-             <string>YouTube Data API v3 のAPIキー</string>
+            <property name="leftMargin">
+             <number>0</number>
             </property>
-           </widget>
+            <property name="topMargin">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="QLineEdit" name="apiKeyLineEdit">
+              <property name="echoMode">
+               <enum>QLineEdit::EchoMode::Password</enum>
+              </property>
+              <property name="placeholderText">
+               <string>YouTube Data API v3 のAPIキー</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QToolButton" name="apiKeyButton">
+              <property name="toolTip">
+               <string>APIキーの取得先 (Google Cloud Console) をブラウザで開く</string>
+              </property>
+              <property name="autoRaise">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>

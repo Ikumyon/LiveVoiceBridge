@@ -92,10 +92,15 @@ class CommentWindow(QWidget):
         self.setMouseTracking(True)
         self.header_bar.setMouseTracking(True)
         self.header_bar.installEventFilter(self)
-        self._resize_dir = None
+        self._resize_edges: set[str] = set()
         self._start_geometry = None
         self._start_mouse_pos = None
-        self.BORDER_WIDTH = 8
+        self._filtered_list_widget: QWidget | None = None
+        self._filtered_list_viewport: QWidget | None = None
+        self.MIN_WIDTH = 200
+        self.MIN_HEIGHT = 200
+        self.RESIZE_MARGIN = 8
+        self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.update_header_style()
 
     def attach_list_widget(self, list_widget: QWidget) -> None:
@@ -103,9 +108,20 @@ class CommentWindow(QWidget):
         self._main_layout.addWidget(list_widget)
         list_widget.setMouseTracking(True)
         list_widget.installEventFilter(self)
+        self._filtered_list_widget = list_widget
+
+        viewport = getattr(list_widget, "viewport", lambda: None)()
+        if viewport is not None:
+            viewport.setMouseTracking(True)
+            viewport.installEventFilter(self)
+            self._filtered_list_viewport = viewport
 
     def detach_list_widget(self, list_widget: QWidget) -> None:
         """QListWidget をこのウィンドウのレイアウトから取り外す。"""
+        if self._filtered_list_viewport is not None:
+            self._filtered_list_viewport.removeEventFilter(self)
+            self._filtered_list_viewport = None
+        self._filtered_list_widget = None
         list_widget.removeEventFilter(self)
         self._main_layout.removeWidget(list_widget)
         list_widget.setParent(None)
@@ -154,7 +170,7 @@ class CommentWindow(QWidget):
         if event.type() == QEvent.Type.MouseMove:
             local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
             self.handle_mouse_move(local_pos, event.globalPosition().toPoint())
-            if self._resize_dir:
+            if self._resize_edges:
                 return True
         elif event.type() == QEvent.Type.MouseButtonPress:
             local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
@@ -166,55 +182,55 @@ class CommentWindow(QWidget):
         return super().eventFilter(obj, event)
 
     def handle_mouse_move(self, local_pos: QPoint, global_pos: QPoint) -> None:
-        if self._resize_dir:
+        if self._resize_edges:
             delta = global_pos - self._start_mouse_pos
             new_geom = self._start_geometry
-            w = new_geom.width()
-            h = new_geom.height()
-            
-            if "right" in self._resize_dir:
-                w = max(200, new_geom.width() + delta.x())
-            if "bottom" in self._resize_dir:
-                h = max(200, new_geom.height() + delta.y())
-                
-            self.resize(w, h)
+            left = new_geom.left()
+            top = new_geom.top()
+            right = new_geom.right()
+            bottom = new_geom.bottom()
+
+            if "left" in self._resize_edges:
+                left = min(new_geom.left() + delta.x(), right - self.MIN_WIDTH + 1)
+            if "right" in self._resize_edges:
+                right = max(new_geom.right() + delta.x(), left + self.MIN_WIDTH - 1)
+            if "top" in self._resize_edges:
+                top = min(new_geom.top() + delta.y(), bottom - self.MIN_HEIGHT + 1)
+            if "bottom" in self._resize_edges:
+                bottom = max(new_geom.bottom() + delta.y(), top + self.MIN_HEIGHT - 1)
+
+            self.setGeometry(left, top, right - left + 1, bottom - top + 1)
             self.update()
         else:
-            on_right = local_pos.x() >= self.width() - self.BORDER_WIDTH
-            on_bottom = local_pos.y() >= self.height() - self.BORDER_WIDTH
-            
-            if on_right and on_bottom:
+            edges = self.resize_edges_at(local_pos)
+            if edges in ({"top", "left"}, {"bottom", "right"}):
                 self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-            elif on_right:
+            elif edges in ({"top", "right"}, {"bottom", "left"}):
+                self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+            elif "left" in edges or "right" in edges:
                 self.setCursor(Qt.CursorShape.SizeHorCursor)
-            elif on_bottom:
+            elif "top" in edges or "bottom" in edges:
                 self.setCursor(Qt.CursorShape.SizeVerCursor)
             else:
                 self.unsetCursor()
 
     def handle_mouse_press(self, local_pos: QPoint, global_pos: QPoint, button: Qt.MouseButton) -> bool:
         if button == Qt.MouseButton.LeftButton:
-            on_right = local_pos.x() >= self.width() - self.BORDER_WIDTH
-            on_bottom = local_pos.y() >= self.height() - self.BORDER_WIDTH
-            
-            direction = ""
-            if on_bottom:
-                direction += "bottom"
-            if on_right:
-                direction += "_right" if direction else "right"
-                
-            if direction:
-                self._resize_dir = direction
+            edges = self.resize_edges_at(local_pos)
+            if edges:
+                self._resize_edges = edges
                 self._start_geometry = self.geometry()
                 self._start_mouse_pos = global_pos
+                self.grabMouse()
                 return True
         return False
 
     def handle_mouse_release(self, button: Qt.MouseButton) -> bool:
-        if button == Qt.MouseButton.LeftButton and self._resize_dir:
-            self._resize_dir = None
+        if button == Qt.MouseButton.LeftButton and self._resize_edges:
+            self._resize_edges = set()
             self._start_geometry = None
             self._start_mouse_pos = None
+            self.releaseMouse()
             
             # サイズ変更後の値をconfigに保存
             geo = self.geometry()
@@ -223,6 +239,22 @@ class CommentWindow(QWidget):
             self.main_app.save_config()
             return True
         return False
+
+    def resize_edges_at(self, local_pos: QPoint) -> set[str]:
+        edges = set()
+        margin = self.RESIZE_MARGIN
+
+        if local_pos.x() <= margin:
+            edges.add("left")
+        elif local_pos.x() >= self.width() - margin:
+            edges.add("right")
+
+        if local_pos.y() <= margin:
+            edges.add("top")
+        elif local_pos.y() >= self.height() - margin:
+            edges.add("bottom")
+
+        return edges
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         local_pos = event.position().toPoint()
@@ -245,7 +277,7 @@ class CommentWindow(QWidget):
         
         self.handle_mouse_move(local_pos, global_pos)
         
-        if not self._resize_dir and event.buttons() == Qt.MouseButton.LeftButton and not self._drag_pos.isNull():
+        if not self._resize_edges and event.buttons() == Qt.MouseButton.LeftButton and not self._drag_pos.isNull():
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
         else:

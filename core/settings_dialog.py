@@ -7,8 +7,8 @@ import urllib.request
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QMimeData, QObject, QPoint, QRegularExpression, Signal, Qt, QThread, QUrl
-from PySide6.QtGui import QAction, QDrag, QRegularExpressionValidator, QColor, QIcon, QDesktopServices
+from PySide6.QtCore import QFile, QObject, QPoint, Signal, Qt, QThread, QUrl
+from PySide6.QtGui import QAction, QColor, QIcon, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QToolButton,
     QScrollArea,
     QSpinBox,
-    QStyledItemDelegate,
     QComboBox,
     QVBoxLayout,
     QTableWidget,
@@ -52,133 +51,8 @@ import core.dictionary as dictionary
 import core.tts.factory as tts_factory
 from core.speakers.utils import SPEAKER_GROUP_ORDER, group_speakers_by_kana, speaker_sort_key
 
-
-class HiraganaDelegate(QStyledItemDelegate):
-    """読み列（0列目）をひらがなのみ入力に制限するデリゲート。"""
-
-    def createEditor(self, parent, option, index):
-        editor = QLineEdit(parent)
-        # ひらがな・長音符・句読点などを許可する正規表現
-        pattern = QRegularExpression("[\u3040-\u309F\u30FC]*")
-        validator = QRegularExpressionValidator(pattern, editor)
-        editor.setValidator(validator)
-        return editor
-
-
-class PlaceholderFrame(QFrame):
-    def __init__(self, dialog: SettingsDialog):
-        super().__init__()
-        self.dialog = dialog
-        self.setAcceptDrops(True)
-
-    def dragEnterEvent(self, event) -> None:
-        if event.mimeData().hasFormat(ReadBlockFrame.MIME_TYPE):
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event) -> None:
-        if event.mimeData().hasFormat(ReadBlockFrame.MIME_TYPE):
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event) -> None:
-        if event.mimeData().hasFormat(ReadBlockFrame.MIME_TYPE):
-            source_id = int(bytes(event.mimeData().data(ReadBlockFrame.MIME_TYPE)).decode("utf-8"))
-            self.dialog.drop_on_placeholder(source_id)
-            event.acceptProposedAction()
-        else:
-            super().dropEvent(event)
-
-
-class ReadBlockFrame(QFrame):
-    move_requested = Signal(int)
-    MIME_TYPE = "application/x-livevoicebridge-read-block"
-
-    def __init__(self, block_id: int, dialog: SettingsDialog):
-        super().__init__()
-        self.block_id = block_id
-        self.dialog = dialog
-        self._drag_start_pos = QPoint()
-        self.setAcceptDrops(True)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start_pos = event.position().toPoint()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            super().mouseMoveEvent(event)
-            return
-        distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
-        if distance < QApplication.startDragDistance():
-            super().mouseMoveEvent(event)
-            return
-
-        mime_data = QMimeData()
-        mime_data.setData(self.MIME_TYPE, str(self.block_id).encode("utf-8"))
-        drag = QDrag(self)
-        drag.setMimeData(mime_data)
-        drag.exec(Qt.DropAction.MoveAction)
-        # ドラッグ終了時のクリーンアップ
-        self.dialog.placeholder.hide()
-        if self.dialog.read_block_layout.indexOf(self.dialog.placeholder) != -1:
-            self.dialog.read_block_layout.removeWidget(self.dialog.placeholder)
-        self.dialog.update_read_block_scroll_area_height()
-
-    def dragEnterEvent(self, event) -> None:
-        if event.mimeData().hasFormat(self.MIME_TYPE):
-            source_id = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
-            if source_id != self.block_id:
-                self._update_placeholder_pos(event.position().x(), source_id)
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event) -> None:
-        if event.mimeData().hasFormat(self.MIME_TYPE):
-            source_id = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
-            if source_id != self.block_id:
-                self._update_placeholder_pos(event.position().x(), source_id)
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event) -> None:
-        if not event.mimeData().hasFormat(self.MIME_TYPE):
-            super().dropEvent(event)
-            return
-        source_id = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
-        if source_id != self.block_id:
-            self.move_requested.emit(source_id)
-        event.acceptProposedAction()
-
-    def _update_placeholder_pos(self, x: float, source_id: int) -> None:
-        widgets = self.dialog.read_block_widgets()
-        source_widget = next((w for w in widgets if w.block_id == source_id), None)
-        if source_widget:
-            self.dialog.placeholder.setFixedSize(source_widget.size())
-            
-        layout = self.dialog.read_block_layout
-        target_index = layout.indexOf(self)
-        
-        insert_after = x > (self.width() / 2)
-        if insert_after:
-            target_index += 1
-            
-        current_placeholder_idx = layout.indexOf(self.dialog.placeholder)
-        
-        if current_placeholder_idx == target_index:
-            return
-            
-        if current_placeholder_idx != -1:
-            layout.removeWidget(self.dialog.placeholder)
-            
-        layout.insertWidget(target_index, self.dialog.placeholder)
-        self.dialog.placeholder.show()
-        self.dialog.update_read_block_scroll_area_height()
+from core.ui.delegates import HiraganaDelegate
+from core.ui.read_blocks import PlaceholderFrame, ReadBlockFrame
 
 
 class SettingsDialog(QObject):
@@ -219,6 +93,7 @@ class SettingsDialog(QObject):
     def _bind_basic_widgets(self) -> None:
         # ウィジェットのバインド
         self.api_key_line: QLineEdit = self.dialog_window.findChild(QLineEdit, "apiKeyLineEdit")
+        self.api_key_btn: QToolButton = self.dialog_window.findChild(QToolButton, "apiKeyButton")
         self.speaker_button: QPushButton = self.dialog_window.findChild(QPushButton, "speakerButton")
         self.skip_history_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "skipHistoryCheckBox")
         self.read_super_chat_check: QCheckBox = self.dialog_window.findChild(QCheckBox, "readSuperChatCheckBox")
@@ -226,45 +101,18 @@ class SettingsDialog(QObject):
         self.tts_test_button: QPushButton = self.dialog_window.findChild(QPushButton, "ttsTestButton")
         self.button_box: QDialogButtonBox = self.dialog_window.findChild(QDialogButtonBox, "buttonBox")
 
-        # APIキー取得用ボタンを動的に追加
-        from PySide6.QtWidgets import QGroupBox
-        youtube_group_box: QGroupBox = self.dialog_window.findChild(QGroupBox, "youtubeGroupBox")
-        if youtube_group_box and self.api_key_line:
-            layout = youtube_group_box.layout()
-            if layout:
-                # 既存の api_key_line をレイアウトから取り除く
-                layout.removeWidget(self.api_key_line)
-                
-                # 横並びレイアウトを作成
-                h_layout = QHBoxLayout()
-                h_layout.setContentsMargins(0, 0, 0, 0)
-                h_layout.setSpacing(4)
-                
-                # 入力欄を追加
-                h_layout.addWidget(self.api_key_line)
-                
-                # ボタンを作成
-                self.api_key_btn = QToolButton(youtube_group_box)
-                self.api_key_btn.setToolTip("APIキーの取得先 (Google Cloud Console) をブラウザで開く")
-                self.api_key_btn.setAutoRaise(True)
-                
-                # アイコン設定
-                icon_path = os.path.join(EXE_DIR, "assets", "external-link.svg")
-                if os.path.exists(icon_path):
-                    from core.ui.helpers import load_svg_icon
-                    self.api_key_btn.setIcon(load_svg_icon(Path(icon_path), self.api_key_line))
-                
-                h_layout.addWidget(self.api_key_btn)
-                
-                # 元の grid_layout の row=0, column=1, colspan=3 に h_layout を配置
-                layout.addLayout(h_layout, 0, 1, 1, 3)
-                
-                # クリックイベントの接続
-                self.api_key_btn.clicked.connect(
-                    lambda: QDesktopServices.openUrl(
-                        QUrl("https://console.cloud.google.com/apis/library/youtube.googleapis.com")
-                    )
+        # APIキーボタンの設定
+        if self.api_key_btn:
+            icon_path = os.path.join(EXE_DIR, "assets", "external-link.svg")
+            if os.path.exists(icon_path):
+                from core.ui.helpers import load_svg_icon
+                self.api_key_btn.setIcon(load_svg_icon(Path(icon_path), self.api_key_btn))
+            
+            self.api_key_btn.clicked.connect(
+                lambda: QDesktopServices.openUrl(
+                    QUrl("https://console.cloud.google.com/apis/library/youtube.googleapis.com")
                 )
+            )
 
     def _bind_tts_page_widgets(self) -> None:
         # StackedWidget とページのバインド
@@ -759,6 +607,85 @@ class SettingsDialog(QObject):
             dictionary.save_word_dict_data(self.word_dict)
         except Exception as exc:
             QMessageBox.critical(self.dialog_window, "エラー", f"辞書ファイルの保存に失敗しました: {exc}")
+
+    def get_live_settings(self) -> dict:
+        """現在の画面上の設定値を辞書として取得する (リアルタイム反映用)"""
+        engine_key = self.current_active_engine
+        
+        # 各音声エンジン固有の設定値を構築
+        engine_config = {}
+        if engine_key == "voicevox":
+            engine_config = {
+                "url": self.vv_url_line.text().strip(),
+                "path": self.vv_path_line.text().strip(),
+                "speaker_id": self.get_current_speaker_id(),
+                "speed": self.vv_speed_spin.value(),
+                "pitch": self.vv_pitch_spin.value(),
+                "intonation": self.vv_intonation_spin.value(),
+                "volume": self.vv_volume_spin.value(),
+                "pause_length": self.vv_pause_spin.value(),
+                "pre_phoneme_length": self.vv_pre_phoneme_spin.value(),
+                "post_phoneme_length": self.vv_post_phoneme_spin.value(),
+                "max_length": self.vv_max_length_spin.value(),
+            }
+        elif engine_key == "coeiroink":
+            engine_config = {
+                "url": self.coe_url_line.text().strip(),
+                "path": self.coe_path_line.text().strip(),
+                "speaker_id": self.get_current_speaker_id(),
+                "speed": self.coe_speed_spin.value(),
+                "pitch": self.coe_pitch_spin.value(),
+                "intonation": self.coe_intonation_spin.value(),
+                "volume": self.coe_volume_spin.value(),
+                "pause_length": self.coe_pause_spin.value(),
+                "pre_phoneme_length": self.coe_pre_phoneme_spin.value(),
+                "post_phoneme_length": self.coe_post_phoneme_spin.value(),
+                "max_length": self.coe_max_length_spin.value(),
+            }
+        elif engine_key == "bouyomichan":
+            engine_config = {
+                "url": self.bc_url_line.text().strip(),
+                "path": self.bc_path_line.text().strip(),
+                "speaker_id": self.get_current_speaker_id(),
+                "speed": self.bc_speed_spin.value(),
+                "pitch": self.bc_pitch_spin.value(),
+                "volume": self.bc_volume_spin.value(),
+                "max_length": self.bc_max_length_spin.value(),
+            }
+        elif engine_key == "supertonic_lightweight":
+            engine_config = {
+                "url": "local://supertonic-lightweight",
+                "path": self.engine_settings["supertonic_lightweight"]["path"],
+                "speaker_id": self.get_current_speaker_id(),
+                "speed": self.lightweight_st_speed_spin.value(),
+                "volume": self.lightweight_st_volume_spin.value(),
+                "max_length": self.lightweight_st_max_length_spin.value(),
+            }
+        elif engine_key == "supertonic":
+            engine_config = {
+                "url": "local://supertonic",
+                "path": self.engine_settings["supertonic"]["path"],
+                "speaker_id": self.get_current_speaker_id(),
+                "speed": self.st_speed_spin.value(),
+                "volume": self.st_volume_spin.value(),
+                "max_length": self.st_max_length_spin.value(),
+                "num_steps": self.st_steps_spin.value(),
+                "device": self.st_device_combo.currentData(),
+            }
+
+        return {
+            "engine_type": engine_key,
+            "engine_config": engine_config,
+            "skip_history": self.skip_history_check.isChecked(),
+            "read_super_chat": self.read_super_chat_check.isChecked(),
+            "read_blocks": self.get_read_blocks(),
+            "word_list": self.get_all_merged_word_list(),
+            "comment_opacity": self.opacity_slider.value() / 100.0,
+            "comment_header_opacity": self.header_opacity_slider.value() / 100.0,
+            "comment_border_opacity": self.border_opacity_slider.value() / 100.0,
+            "comment_bg_color": self.bg_color_hex,
+            "comment_border_color": self.border_color_hex,
+        }
 
     def connect_signals(self) -> None:
         # パス参照ボタンの接続

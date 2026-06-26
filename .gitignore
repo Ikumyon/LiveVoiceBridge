@@ -19,7 +19,6 @@ core/stream_list_pb2_grpc.py
 
 #dicts
 dict/
-デフォルト.json
 
 # Local Logs
 *.log

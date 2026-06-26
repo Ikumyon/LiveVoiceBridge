@@ -639,76 +639,18 @@ class LiveVoiceBridgeApp(QObject):
             self.prewarm_selected_tts()
 
     def update_live_settings_from_dialog(self, dialog: SettingsDialog) -> None:
-        # デバッグモード稼働中
-        engine_key = dialog.current_active_engine
-        current_config = {}
-        if engine_key == "voicevox":
-            current_config = {
-                "url": dialog.vv_url_line.text().strip(),
-                "path": dialog.vv_path_line.text().strip(),
-                "speaker_id": dialog.get_current_speaker_id(),
-                "speed": dialog.vv_speed_spin.value(),
-                "pitch": dialog.vv_pitch_spin.value(),
-                "intonation": dialog.vv_intonation_spin.value(),
-                "volume": dialog.vv_volume_spin.value(),
-                "pause_length": dialog.vv_pause_spin.value(),
-                "pre_phoneme_length": dialog.vv_pre_phoneme_spin.value(),
-                "post_phoneme_length": dialog.vv_post_phoneme_spin.value(),
-                "max_length": dialog.vv_max_length_spin.value(),
-            }
-        elif engine_key == "coeiroink":
-            current_config = {
-                "url": dialog.coe_url_line.text().strip(),
-                "path": dialog.coe_path_line.text().strip(),
-                "speaker_id": dialog.get_current_speaker_id(),
-                "speed": dialog.coe_speed_spin.value(),
-                "pitch": dialog.coe_pitch_spin.value(),
-                "intonation": dialog.coe_intonation_spin.value(),
-                "volume": dialog.coe_volume_spin.value(),
-                "pause_length": dialog.coe_pause_length_spin.value() if hasattr(dialog, "coe_pause_length_spin") else dialog.coe_pause_spin.value(), # (dialog._bind_tts_page_widgets で coe_pause_spin にバインドされていました)
-                "pre_phoneme_length": dialog.coe_pre_phoneme_spin.value(),
-                "post_phoneme_length": dialog.coe_post_phoneme_spin.value(),
-                "max_length": dialog.coe_max_length_spin.value(),
-            }
-        elif engine_key == "bouyomichan":
-            current_config = {
-                "url": dialog.bc_url_line.text().strip(),
-                "path": dialog.bc_path_line.text().strip(),
-                "speaker_id": dialog.get_current_speaker_id(),
-                "speed": dialog.bc_speed_spin.value(),
-                "pitch": dialog.bc_pitch_spin.value(),
-                "volume": dialog.bc_volume_spin.value(),
-                "max_length": dialog.bc_max_length_spin.value(),
-            }
-        elif engine_key == "supertonic_lightweight":
-            current_config = {
-                "url": "local://supertonic-lightweight",
-                "path": dialog.engine_settings["supertonic_lightweight"]["path"],
-                "speaker_id": dialog.get_current_speaker_id(),
-                "speed": dialog.lightweight_st_speed_spin.value(),
-                "volume": dialog.lightweight_st_volume_spin.value(),
-                "max_length": dialog.lightweight_st_max_length_spin.value(),
-            }
-        elif engine_key == "supertonic":
-            current_config = {
-                "url": "local://supertonic",
-                "path": dialog.engine_settings["supertonic"]["path"],
-                "speaker_id": dialog.get_current_speaker_id(),
-                "speed": dialog.st_speed_spin.value(),
-                "volume": dialog.st_volume_spin.value(),
-                "max_length": dialog.st_max_length_spin.value(),
-                "num_steps": dialog.st_steps_spin.value(),
-                "device": dialog.st_device_combo.currentData(),
-            }
+        settings = dialog.get_live_settings()
+        engine_key = settings["engine_type"]
+        current_config = settings["engine_config"]
 
         if self.chat_worker is not None and self.chat_worker.isRunning():
-            self.chat_worker.skip_history = dialog.skip_history_check.isChecked()
-            self.chat_worker.read_super_chat = dialog.read_super_chat_check.isChecked()
+            self.chat_worker.skip_history = settings["skip_history"]
+            self.chat_worker.read_super_chat = settings["read_super_chat"]
             self.chat_worker.max_length = int(current_config.get("max_length", 50))
-            self.chat_worker.read_blocks = dialog.get_read_blocks()
+            self.chat_worker.read_blocks = settings["read_blocks"]
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.word_list = dialog.get_all_merged_word_list()
+            self.speech_worker.word_list = settings["word_list"]
             engine_class = tts_factory.get_engine_class(engine_key)
             url = current_config.get("url", engine_class.DEFAULT_URL)
             path = current_config.get("path", "")
@@ -737,11 +679,11 @@ class LiveVoiceBridgeApp(QObject):
                 )
 
         if self.comment_window is not None:
-            self.comment_window.opacity = dialog.opacity_slider.value() / 100.0
-            self.comment_window.header_opacity = dialog.header_opacity_slider.value() / 100.0
-            self.comment_window.border_opacity = dialog.border_opacity_slider.value() / 100.0
-            self.config["comment_bg_color"] = dialog.bg_color_hex
-            self.config["comment_border_color"] = dialog.border_color_hex
+            self.comment_window.opacity = settings["comment_opacity"]
+            self.comment_window.header_opacity = settings["comment_header_opacity"]
+            self.comment_window.border_opacity = settings["comment_border_opacity"]
+            self.config["comment_bg_color"] = settings["comment_bg_color"]
+            self.config["comment_border_color"] = settings["comment_border_color"]
             self.comment_window.update()
 
     def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
