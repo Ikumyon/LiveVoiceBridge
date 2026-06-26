@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.99.0"
 
 if getattr(sys, "frozen", False):
     APP_DIR = Path(sys._MEIPASS)
