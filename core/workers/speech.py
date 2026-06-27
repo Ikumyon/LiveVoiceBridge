@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import queue
+import time
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
@@ -48,7 +49,7 @@ class SpeechWorker(QThread):
     def stop(self) -> None:
         self._running = False
         self.speech_queue.put(None)
-        self.executor.shutdown(wait=False)
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
     def run(self) -> None:
         while self._running:
@@ -75,9 +76,16 @@ class SpeechWorker(QThread):
         ]
 
         for unit, future in zip(units, futures):
+            if not self._running:
+                break
             try:
+                while self._running and not future.done():
+                    time.sleep(0.05)
+                if not self._running:
+                    future.cancel()
+                    break
                 wav_path = future.result()
-                if wav_path:
+                if wav_path and self._running:
                     play_wav(wav_path)
                     os.remove(wav_path)
             except Exception as exc:

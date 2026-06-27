@@ -209,6 +209,7 @@ class LiveVoiceBridgeApp(QObject):
         self.speech_queue: queue.Queue = queue.Queue()
         self.chat_worker: YouTubeChatStreamWorker | None = None
         self.speech_worker: SpeechWorker | None = None
+        self._stopping_workers: list[QThread] = []
         self.tts_engine: BaseTTSEngine | None = None
         self.tts_init_worker: TtsInitializationWorker | None = None
         self._tts_init_signature: tuple[str, str, str, str] | None = None
@@ -966,24 +967,37 @@ class LiveVoiceBridgeApp(QObject):
         self.append_log("開始しました。")
         self.set_running_ui(True)
 
-    def stop_all(self) -> None:
+    def _hold_stopping_worker(self, worker: QThread) -> None:
+        if worker.isFinished():
+            worker.deleteLater()
+            return
+        self._stopping_workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._release_stopping_worker(w))
+
+    def _release_stopping_worker(self, worker: QThread) -> None:
+        if worker in self._stopping_workers:
+            self._stopping_workers.remove(worker)
+        worker.deleteLater()
+
+    def _stop_worker(self, attr_name: str, wait: bool) -> None:
+        worker = getattr(self, attr_name)
+        if worker is None:
+            return
+        setattr(self, attr_name, None)
+        worker.stop()
+        if wait:
+            if not worker.wait(3000):
+                worker.terminate()
+                worker.wait()
+            worker.deleteLater()
+        else:
+            self._hold_stopping_worker(worker)
+
+    def stop_all(self, wait: bool = False) -> None:
         self._pending_start_request = None
 
-        if self.chat_worker is not None:
-            self.chat_worker.stop()
-            # 3秒待機し、終了しなければ強制終了
-            if not self.chat_worker.wait(3000):
-                self.chat_worker.terminate()
-                self.chat_worker.wait()
-            self.chat_worker = None
-
-        if self.speech_worker is not None:
-            self.speech_worker.stop()
-            # 3秒待機し、終了しなければ強制終了
-            if not self.speech_worker.wait(3000):
-                self.speech_worker.terminate()
-                self.speech_worker.wait()
-            self.speech_worker = None
+        self._stop_worker("chat_worker", wait)
+        self._stop_worker("speech_worker", wait)
 
         # ローカルTTSは次回接続に備えてロードしたままにする
         if self.tts_engine is not None and not self.tts_engine.IS_LOCAL_ENGINE:
@@ -998,7 +1012,7 @@ class LiveVoiceBridgeApp(QObject):
         self.test_comment_button.hide()
 
     def shutdown(self) -> None:
-        self.stop_all()
+        self.stop_all(wait=True)
         if self.tts_init_worker is not None and self.tts_init_worker.isRunning():
             self.tts_init_worker.wait()
         if self.tts_engine is not None:

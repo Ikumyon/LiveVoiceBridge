@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 a = Analysis(
     ['main.py'],
@@ -21,8 +21,11 @@ a = Analysis(
         'numpy',
         'pyopenjtalk',
         'pykakasi',
-        'emoji'
-    ],
+        'emoji',
+        'google',
+        'google.protobuf',
+        'google.protobuf.internal',
+    ] + collect_submodules('google.protobuf') + collect_submodules('grpc'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
