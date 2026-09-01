@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import psutil
 import queue
 import sys
 from pathlib import Path
@@ -91,6 +92,9 @@ from core.ui.helpers import (
 )
 import core.tts.factory as tts_factory
 import core.dictionary as dictionary
+from core.metrics_collector import MetricsCollector, MetricsWorker
+from core.ui.task_manager_widget import TaskManagerWidget
+
 
 
 class TtsInitializationWorker(QThread):
@@ -192,6 +196,7 @@ class LiveVoiceBridgeApp(QObject):
 
         self.load_settings()
         self.connect_signals()
+        self._setup_task_manager()
         self._restore_startup_state()
 
     def _load_main_window(self) -> QWidget:
@@ -286,6 +291,77 @@ class LiveVoiceBridgeApp(QObject):
                 button_layout.insertWidget(clear_btn_idx + 1, self.test_comment_button)
             else:
                 button_layout.addWidget(self.test_comment_button)
+
+    def _setup_task_manager(self) -> None:
+        """タスクマネージャータブのセットアップとタイマー開始"""
+        self.task_manager_tab = self.window.findChild(QWidget, "taskManagerTab")
+        if self.task_manager_tab is not None:
+            layout = self.task_manager_tab.layout()
+            if layout is not None:
+                self.task_manager_widget = TaskManagerWidget(self.task_manager_tab)
+                layout.addWidget(self.task_manager_widget)
+
+                # バックグラウンド並列スレッドでメトリクス収集
+                self.metrics_worker = MetricsWorker(interval_sec=1.0, parent=self)
+                self.metrics_worker.metrics_collected.connect(self._on_metrics_collected)
+                self.metrics_worker.start()
+
+                # その他の軽量情報更新タイマー (1秒)
+                self.task_mgr_timer = QTimer(self)
+                self.task_mgr_timer.timeout.connect(self._on_task_mgr_tick)
+                self.task_mgr_timer.start(1000)
+
+    def _on_metrics_collected(self, metrics_data: dict) -> None:
+        """バックグラウンドスレッドからのメトリクス通知の受領"""
+        if hasattr(self, "task_manager_widget") and self.task_manager_widget is not None:
+            try:
+                self.task_manager_widget.update_metrics(metrics_data)
+            except Exception:
+                pass
+
+    def _on_task_mgr_tick(self) -> None:
+        """1秒間隔で軽量な接続・タスク情報を更新"""
+        if not hasattr(self, "task_manager_widget"):
+            return
+
+        # 2. タスクキュー情報更新
+        try:
+            tts_queue_len = self.speech_queue.qsize() if hasattr(self, "speech_queue") else 0
+            comment_queue_len = 0
+            current_text = ""
+            if hasattr(self, "speech_worker") and self.speech_worker is not None:
+                current_text = getattr(self.speech_worker, "current_speech_text", "")
+
+            self.task_manager_widget.update_task_info(comment_queue_len, tts_queue_len, current_text)
+        except Exception:
+            pass
+
+        # 3. 同時接続数・通信状態更新
+        try:
+            is_yt_connected = (
+                hasattr(self, "chat_worker")
+                and self.chat_worker is not None
+                and self.chat_worker.isRunning()
+            )
+            tts_engine_name = self.config.get("tts_engine", "不明")
+            
+            socket_count = 0
+            try:
+                proc = psutil.Process()
+                socket_count = len(proc.net_connections())
+            except Exception:
+                socket_count = 0
+
+            active_tts_conn = 1 if (hasattr(self, "tts_engine") and self.tts_engine is not None) else 0
+
+            self.task_manager_widget.update_connection_info(
+                is_yt_connected,
+                active_tts_conn,
+                tts_engine_name,
+                socket_count
+            )
+        except Exception:
+            pass
 
     def _restore_startup_state(self) -> None:
         # PiP状態を復元
@@ -1086,6 +1162,13 @@ class LiveVoiceBridgeApp(QObject):
             return
         speak_segments_offline(self.tts_engine, segments, speaker_id, speed, word_list)
         self.stop_all()
+
+    def shutdown(self) -> None:
+        if hasattr(self, "metrics_worker") and self.metrics_worker is not None:
+            try:
+                self.metrics_worker.stop()
+            except Exception:
+                pass
 
     def show(self) -> None:
         self.window.show()

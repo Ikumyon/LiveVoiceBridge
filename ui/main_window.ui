@@ -153,6 +153,12 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="taskManagerTab">
+       <attribute name="title">
+        <string>タスクマネージャー</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="taskManagerTabLayout"/>
+      </widget>
      </widget>
     </item>
    </layout>
