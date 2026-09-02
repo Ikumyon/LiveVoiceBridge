@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from core import dictionary
+from livevoicebridge.infrastructure import dictionary_repository as dictionary
 
 
 def test_default_dictionary_is_created_as_utf8_json(tmp_path: Path) -> None:

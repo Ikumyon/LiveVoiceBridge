@@ -1,3 +1,5 @@
+"""YouTube streaming adapter."""
+
 from __future__ import annotations
 
 import queue
@@ -14,7 +16,6 @@ from core.comment_processing import (
 )
 from core.streaming.youtube.grpc import GRPC_TARGET, ensure_grpc_files
 from core.streaming.youtube.url import extract_video_id
-
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
@@ -58,6 +59,19 @@ class YouTubeChatStreamWorker(QThread):
                 self._channel.close()
             except Exception:
                 pass
+
+    def reconfigure(
+        self,
+        *,
+        skip_history: bool,
+        read_paid_events: bool,
+        max_length: int,
+        read_blocks: list[dict],
+    ) -> None:
+        self.skip_history = skip_history
+        self.read_super_chat = read_paid_events
+        self.max_length = max_length
+        self.read_blocks = normalize_read_blocks(read_blocks)
 
     def run(self) -> None:
         try:
@@ -168,14 +182,16 @@ class YouTubeChatStreamWorker(QThread):
                         segments, play_files = parse_comment_into_segments(read_text)
                         clean_msg = "".join([s["text"] for s in segments])
 
-                        self.comment_received.emit({
-                            "author": author,
-                            "message": message,
-                            "profile_image_url": profile_image_url,
-                            "is_skip": is_skip,
-                            "play_file": play_files[0] if play_files else None,
-                            "clean_message": clean_msg,
-                        })
+                        self.comment_received.emit(
+                            {
+                                "author": author,
+                                "message": message,
+                                "profile_image_url": profile_image_url,
+                                "is_skip": is_skip,
+                                "play_file": play_files[0] if play_files else None,
+                                "clean_message": clean_msg,
+                            }
+                        )
 
                         if not is_skip:
                             self.log.emit(f"{author}: {clean_msg}")

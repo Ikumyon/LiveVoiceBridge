@@ -16,6 +16,7 @@ from livevoicebridge.application.models import (
     ReadBlock,
     ReadBlockKind,
     RuntimeState,
+    SpeechConfig,
     StreamingConfig,
     TtsEngineKind,
 )
@@ -38,7 +39,10 @@ def _config() -> AppConfig:
     return AppConfig(
         schema_version=1,
         streaming=StreamingConfig(),
-        speech_engine=EngineConfig(kind=TtsEngineKind.VOICEVOX),
+        speech=SpeechConfig(
+            active_engine=TtsEngineKind.VOICEVOX,
+            engines=(EngineConfig(kind=TtsEngineKind.VOICEVOX),),
+        ),
         presentation=PresentationConfig(),
     )
 
@@ -47,10 +51,10 @@ def test_application_models_are_immutable_typed_values() -> None:
     config = _config()
 
     assert APP_NAME == "LiveVoiceBridge"
-    assert config.read_blocks == (ReadBlock(ReadBlockKind.MESSAGE),)
-    assert config.speech_engine.kind is TtsEngineKind.VOICEVOX
+    assert config.speech.read_blocks == (ReadBlock(ReadBlockKind.MESSAGE),)
+    assert config.speech.engine().kind is TtsEngineKind.VOICEVOX
     with pytest.raises(FrozenInstanceError):
-        config.dictionary_group = "変更不可"  # type: ignore[misc]
+        config.schema_version = 2  # type: ignore[misc]
 
 
 def test_repository_port_accepts_structural_implementation() -> None:

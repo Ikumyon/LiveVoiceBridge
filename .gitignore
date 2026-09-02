@@ -42,6 +42,7 @@ app_run.log
 .DS_Store
 Thumbs.db
 config.json
+config.legacy.json
 sounds/
 build/
 dist/

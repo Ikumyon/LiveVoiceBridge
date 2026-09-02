@@ -63,7 +63,11 @@ class EngineConfig:
     post_phoneme_length: float | None = None
     max_length: int = 50
     num_steps: int | None = None
+    num_threads: int | None = None
     device: str = "cpu"
+    device_policy: str = "auto"
+    device_priority: tuple[str, ...] = ()
+    backend: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +76,20 @@ class StreamingConfig:
     youtube_source: str = ""
     skip_history: bool = True
     read_paid_events: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechConfig:
+    active_engine: TtsEngineKind
+    engines: tuple[EngineConfig, ...]
+    read_blocks: tuple[ReadBlock, ...] = (ReadBlock(ReadBlockKind.MESSAGE),)
+
+    def engine(self, kind: TtsEngineKind | None = None) -> EngineConfig:
+        selected = kind or self.active_engine
+        for engine in self.engines:
+            if engine.kind is selected:
+                return engine
+        raise KeyError(f"TTS engine configuration is missing: {selected.value}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,17 +109,31 @@ class PresentationConfig:
     background_color: str = "#1e1e1e"
     border_color: str = "#3c3c3c"
     popup_metrics: PopupMetricsConfig = field(default_factory=PopupMetricsConfig)
+    window_x: int | None = None
+    window_y: int | None = None
+    window_width: int = 360
+    window_height: int = 500
+
+
+@dataclass(frozen=True, slots=True)
+class DictionaryConfig:
+    active_group: str = "デフォルト"
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationConfig:
+    check_updates: bool = True
+    use_ime: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     schema_version: int
     streaming: StreamingConfig
-    speech_engine: EngineConfig
+    speech: SpeechConfig
     presentation: PresentationConfig
-    read_blocks: tuple[ReadBlock, ...] = (ReadBlock(ReadBlockKind.MESSAGE),)
-    dictionary_group: str = "デフォルト"
-    check_updates: bool = True
+    dictionary: DictionaryConfig = field(default_factory=DictionaryConfig)
+    application: ApplicationConfig = field(default_factory=ApplicationConfig)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +188,19 @@ class SpeechSegment:
 class SpeechRequest:
     segments: tuple[SpeechSegment, ...]
     engine: EngineConfig
+
+
+@dataclass(frozen=True, slots=True)
+class TtsInitializationRequest:
+    engine: EngineConfig
+    stream_source: str = ""
+    api_key: str = ""
+    debug: bool = False
+
+    @property
+    def signature(self) -> tuple[str, str, str, str]:
+        path = self.engine.model_path or self.engine.executable_path
+        return (self.engine.kind.value, self.engine.url, path, self.engine.device)
 
 
 @dataclass(frozen=True, slots=True)

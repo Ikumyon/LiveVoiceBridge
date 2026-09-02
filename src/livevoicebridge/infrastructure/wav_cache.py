@@ -1,3 +1,5 @@
+"""SQLite-backed synthesized WAV cache."""
+
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +15,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from core.app_config import EXE_DIR
-
 
 CACHE_NONE = "none"
 CACHE_TEMP = "temp"
@@ -186,16 +187,8 @@ class TtsWavCache:
             if stats["hit_count"] < 2 and not should_promote:
                 return None, CACHE_NONE
 
-            target_level = (
-                CACHE_PERSISTENT
-                if should_promote
-                else CACHE_TEMP
-            )
-            target_dir = (
-                self.persistent_dir
-                if target_level == CACHE_PERSISTENT
-                else self.temp_dir
-            )
+            target_level = CACHE_PERSISTENT if should_promote else CACHE_TEMP
+            target_dir = self.persistent_dir if target_level == CACHE_PERSISTENT else self.temp_dir
             target_path = target_dir / f"{cache_key}.wav"
             self._atomic_write(target_path, wav_data)
 
@@ -229,9 +222,7 @@ class TtsWavCache:
     def cleanup(self) -> None:
         now = datetime.now()
         temp_cutoff = (now - timedelta(days=self.TEMP_TTL_DAYS)).isoformat()
-        persistent_cutoff = (
-            now - timedelta(days=self.PERSISTENT_UNUSED_DAYS)
-        ).isoformat()
+        persistent_cutoff = (now - timedelta(days=self.PERSISTENT_UNUSED_DAYS)).isoformat()
 
         with self._lock, self._connect() as connection:
             stale_rows = connection.execute(
@@ -265,7 +256,7 @@ class TtsWavCache:
     def _should_promote(
         self,
         connection: sqlite3.Connection,
-        stats: sqlite3.Row,
+        stats: dict,
         unit_type: str,
         request: dict,
     ) -> bool:
@@ -279,17 +270,10 @@ class TtsWavCache:
         if unit_type == "short_reaction":
             return (
                 stats["hit_count"] >= 5
-                and (
-                    stats["active_days"] >= 2
-                    or stats["active_sessions"] >= 2
-                )
+                and (stats["active_days"] >= 2 or stats["active_sessions"] >= 2)
                 and stats["burst_ratio"] <= 0.8
             )
-        return (
-            stats["hit_count"] >= 4
-            and stats["active_days"] >= 2
-            and stats["burst_ratio"] <= 0.7
-        )
+        return stats["hit_count"] >= 4 and stats["active_days"] >= 2 and stats["burst_ratio"] <= 0.7
 
     def _get_stats(
         self,
@@ -350,11 +334,7 @@ class TtsWavCache:
         return True
 
     def _enforce_size_limit(self, connection: sqlite3.Connection) -> None:
-        files = [
-            path
-            for directory in (self.temp_dir, self.persistent_dir)
-            for path in directory.glob("*.wav")
-        ]
+        files = [path for directory in (self.temp_dir, self.persistent_dir) for path in directory.glob("*.wav")]
         total_size = sum(path.stat().st_size for path in files if path.is_file())
         if total_size <= self.MAX_CACHE_BYTES:
             return
@@ -431,19 +411,14 @@ class TtsWavCache:
                 );
                 """
             )
-            columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(tts_units)")
-            }
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(tts_units)")}
             for name, definition in (
                 ("active_days", "INTEGER NOT NULL DEFAULT 0"),
                 ("active_sessions", "INTEGER NOT NULL DEFAULT 0"),
                 ("burst_score", "REAL NOT NULL DEFAULT 0"),
             ):
                 if name not in columns:
-                    connection.execute(
-                        f"ALTER TABLE tts_units ADD COLUMN {name} {definition}"
-                    )
+                    connection.execute(f"ALTER TABLE tts_units ADD COLUMN {name} {definition}")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)

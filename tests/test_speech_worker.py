@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 from unittest.mock import Mock, patch
 
-from core.workers.speech import SpeechWorker
+from livevoicebridge.workers.speech import SpeechWorker
 
 
 class _FakeCache:
@@ -12,7 +12,7 @@ class _FakeCache:
 
 
 def _worker(engine_type: str, engine_config: dict) -> SpeechWorker:
-    with patch("core.workers.speech.TtsWavCache", return_value=_FakeCache()):
+    with patch("livevoicebridge.workers.speech.TtsWavCache", return_value=_FakeCache()):
         return SpeechWorker(queue.Queue(), Mock(), engine_type, engine_config, [])
 
 

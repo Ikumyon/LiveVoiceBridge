@@ -7,6 +7,7 @@ import platform
 import psutil
 import queue
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 try:
@@ -16,7 +17,6 @@ except ImportError:
     HAS_MULTIMEDIA = False
 
 import json
-import copy
 from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl, QByteArray, QThread, QTimer, Signal
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
@@ -49,70 +49,91 @@ from core.app_config import (
     PIP_ON_ICON_FILE,
     TV_ICON_FILE,
     CONFIG_FILE,
-    DEFAULT_CONFIG,
 )
 from core.comment_processing import (
     build_read_text,
-    normalize_read_blocks,
     parse_comment_into_segments,
 )
 from core.time_utils import now_text
-from core.streaming.youtube.worker import YouTubeChatStreamWorker
-from core.workers.speech import SpeechWorker
+from livevoicebridge.infrastructure.streaming.youtube import YouTubeChatStreamWorker
+from livevoicebridge.workers.speech import SpeechWorker
 from core.settings_dialog import SettingsDialog
 from core.comment_window import CommentWindow
 from core.tts.base import BaseTTSEngine
 from core.tts.tools.debug_speech import speak_segments_offline
-from core.tts.runtime import ensure_tts_running as ensure_tts_engine_running
 from core.ui.helpers import (
     COMMENT_LIST_STYLESHEET,
     clip_to_circle,
     create_comment_item,
     load_svg_icon,
 )
-import core.tts.factory as tts_factory
-import core.dictionary as dictionary
+import livevoicebridge.infrastructure.dictionary_repository as dictionary
 from core.metrics_collector import MetricsCollector, MetricsWorker
 from core.ui.task_manager_widget import TaskManagerWidget
 from core.ui.popup_metrics import fixed_metric_catalog, metric_catalog_from_data
+from livevoicebridge.application.models import (
+    AppConfig,
+    EngineConfig,
+    PopupMetricsConfig,
+    PresentationConfig,
+    ReadBlock,
+    ReadBlockKind,
+    RuntimeState,
+    SpeechConfig,
+    StreamingConfig,
+    TtsEngineKind,
+    TtsInitializationRequest,
+)
+from livevoicebridge.application.service import ApplicationService
+from livevoicebridge.infrastructure.config_repository import JsonConfigRepository
+from livevoicebridge.infrastructure.tts.registry import (
+    TtsEngineRegistry,
+    backend_config,
+    config_from_backend,
+)
+
+
+def _read_blocks_payload(blocks: tuple[ReadBlock, ...]) -> list[dict[str, str]]:
+    return [
+        {"type": block.kind.value, **({"value": block.value} if block.kind is ReadBlockKind.TEXT else {})}
+        for block in blocks
+    ]
+
+
+def _popup_metrics_payload(config: PopupMetricsConfig) -> dict[str, object]:
+    return {
+        "placement": config.placement,
+        "vertical_ratio": config.vertical_ratio,
+        "horizontal_ratio": config.horizontal_ratio,
+        "display_modes": dict(config.display_modes),
+    }
 
 
 
 class TtsInitializationWorker(QThread):
     def __init__(
         self,
-        engine_type: str,
-        url: str,
-        path: str,
-        device: str,
+        registry: TtsEngineRegistry,
+        config: EngineConfig,
     ):
         super().__init__()
-        self.engine_type = engine_type
-        self.url = url
-        self.path = path
-        self.device = device
+        self.registry = registry
+        self.config = config
         self.engine: BaseTTSEngine | None = None
         self.success = False
         self.error = ""
 
     def run(self) -> None:
         try:
-            engine_class = tts_factory.get_engine_class(self.engine_type)
-            self.engine = tts_factory.get_engine_instance(
-                self.engine_type,
-                self.url,
-                self.path,
-            )
-            configure_device = getattr(self.engine, "configure_device", None)
-            if configure_device is not None:
-                configure_device(self.device)
+            engine_class = self.registry.engine_class(self.config.kind)
+            self.engine = self.registry.create(self.config)
 
             if self.engine.is_running():
                 self.success = True
                 return
 
             if engine_class.REQUIRES_URL and (
-                not self.path or not os.path.exists(self.path)
+                not self.config.executable_path or not os.path.exists(self.config.executable_path)
             ):
                 self.error = "実行ファイルのパスが設定されていません。"
                 return
@@ -166,8 +187,11 @@ class LiveVoiceBridgeApp(QObject):
         super().__init__()
         self.window = self._load_main_window()
 
-        self.config: dict = {}
+        self.config_repository = JsonConfigRepository(CONFIG_FILE)
+        self.tts_registry = TtsEngineRegistry()
+        self.config: AppConfig
         self.load_config()
+        self.application_service = ApplicationService(self._on_runtime_state_changed)
         self._init_runtime_state()
         self._init_audio_player()
         self._bind_widgets()
@@ -202,8 +226,8 @@ class LiveVoiceBridgeApp(QObject):
         self.tts_init_worker: TtsInitializationWorker | None = None
         self._tts_init_signature: tuple[str, str, str, str] | None = None
         self._tts_ready_signature: tuple[str, str, str, str] | None = None
-        self._desired_tts_request: dict | None = None
-        self._pending_start_request: dict | None = None
+        self._desired_tts_request: TtsInitializationRequest | None = None
+        self._pending_start_request: TtsInitializationRequest | None = None
         self._pending_tts_test_callback = None
         self.comment_window: CommentWindow | None = None
         self._comment_tab_layout = None
@@ -328,7 +352,7 @@ class LiveVoiceBridgeApp(QObject):
                 and self.chat_worker is not None
                 and self.chat_worker.isRunning()
             )
-            tts_engine_name = self.config.get("tts_engine", "不明")
+            tts_engine_name = self.config.speech.active_engine.value
             
             socket_count = 0
             try:
@@ -355,10 +379,10 @@ class LiveVoiceBridgeApp(QObject):
 
     def _restore_startup_state(self) -> None:
         # PiP状態を復元
-        if self.config.get("comment_popout", False):
+        if self.config.presentation.comment_popout:
             self.set_comment_popout(True)
 
-        if self.config.get("check_updates", True):
+        if self.config.application.check_updates:
             self.check_updates()
 
         QTimer.singleShot(0, self.prewarm_selected_tts)
@@ -408,31 +432,17 @@ class LiveVoiceBridgeApp(QObject):
         reply.deleteLater()
 
     def load_config(self) -> None:
-        try:
-            if CONFIG_FILE.exists():
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    self.config = copy.deepcopy(DEFAULT_CONFIG)
-                    self.config.update(loaded)
-
-                    # 各エンジン固有のマイグレーションを実行
-                    tts_factory.migrate_all_configs(self.config, loaded)
-            else:
-                self.config = copy.deepcopy(DEFAULT_CONFIG)
-                self.save_config()
-        except Exception as exc:
-            print(f"設定ファイルのロード失敗: {exc}")
-            self.config = copy.deepcopy(DEFAULT_CONFIG)
+        self.config = self.config_repository.load()
 
     def save_config(self) -> None:
-        try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=2)
-        except Exception as exc:
-            print(f"設定ファイルのセーブ失敗: {exc}")
+        self.config_repository.save(self.config)
+
+    def replace_config(self, config: AppConfig) -> None:
+        self.config = config
+        self.save_config()
 
     def load_settings(self) -> None:
-        self.url_line.setText(self.config.get("youtube_url", ""))
+        self.url_line.setText(self.config.streaming.youtube_source)
 
     def connect_signals(self) -> None:
         self.start_button.clicked.connect(self.start)
@@ -551,7 +561,10 @@ class LiveVoiceBridgeApp(QObject):
         else:
             self._disable_popout()
 
-        self.config["comment_popout"] = enabled
+        self.config = replace(
+            self.config,
+            presentation=replace(self.config.presentation, comment_popout=enabled),
+        )
         self.save_config()
 
     def _enable_popout(self) -> None:
@@ -591,10 +604,11 @@ class LiveVoiceBridgeApp(QObject):
         # PiPウィンドウを生成して QListWidget を渡す
         if self.comment_window is None:
             self.comment_window = CommentWindow(self)
-        self.comment_window.opacity = self.config.get("comment_opacity", 0.8)
-        self.comment_window.header_opacity = self.config.get("comment_header_opacity", 0.8)
-        self.comment_window.border_opacity = self.config.get("comment_border_opacity", 0.8)
-        self.comment_window.apply_metrics_settings(self.config.get("popup_metrics", {}))
+        presentation = self.config.presentation
+        self.comment_window.opacity = presentation.comment_opacity
+        self.comment_window.header_opacity = presentation.header_opacity
+        self.comment_window.border_opacity = presentation.border_opacity
+        self.comment_window.apply_metrics_settings(_popup_metrics_payload(presentation.popup_metrics))
         self.comment_window.attach_list_widget(self.comment_list)
         if self.latest_metrics:
             self.comment_window.update_metrics(self.latest_metrics)
@@ -603,10 +617,10 @@ class LiveVoiceBridgeApp(QObject):
         )
 
         # 保存済みの位置・サイズがあれば復元
-        x = self.config.get("comment_win_x")
-        y = self.config.get("comment_win_y")
-        w = self.config.get("comment_win_w", 360)
-        h = self.config.get("comment_win_h", 500)
+        x = presentation.window_x
+        y = presentation.window_y
+        w = presentation.window_width
+        h = presentation.window_height
         self.comment_window.resize(w, h)
         if x is not None and y is not None:
             self.comment_window.move(x, y)
@@ -617,10 +631,16 @@ class LiveVoiceBridgeApp(QObject):
         if self.comment_window is not None:
             # ウィンドウの位置・サイズを保存
             geo = self.comment_window.geometry()
-            self.config["comment_win_x"] = geo.x()
-            self.config["comment_win_y"] = geo.y()
-            self.config["comment_win_w"] = geo.width()
-            self.config["comment_win_h"] = geo.height()
+            self.config = replace(
+                self.config,
+                presentation=replace(
+                    self.config.presentation,
+                    window_x=geo.x(),
+                    window_y=geo.y(),
+                    window_width=geo.width(),
+                    window_height=geo.height(),
+                ),
+            )
 
             # QListWidget をウィンドウから取り外す
             self.comment_window.detach_list_widget(self.comment_list)
@@ -650,6 +670,9 @@ class LiveVoiceBridgeApp(QObject):
         self.stop_button.setEnabled(running)
         self.url_line.setEnabled(not running)
 
+    def _on_runtime_state_changed(self, state: RuntimeState) -> None:
+        self.set_running_ui(state in {RuntimeState.STARTING, RuntimeState.RUNNING, RuntimeState.STOPPING})
+
     def show_error(self, text: str) -> None:
         self.append_log(f"[エラー] {text}")
         QMessageBox.warning(self.window, "LiveVoiceBridge エラー", text)
@@ -661,8 +684,7 @@ class LiveVoiceBridgeApp(QObject):
         return dictionary.load_all_word_dict_data()
 
     def open_settings_dialog(self) -> None:
-        # ロールバック用に現在の設定をバックアップ
-        backup_config = copy.deepcopy(self.config)
+        backup_config = self.config
         backup_word_dict_data = self.load_raw_word_dict_data()
 
         dialog = SettingsDialog(self)
@@ -673,7 +695,6 @@ class LiveVoiceBridgeApp(QObject):
         if result == QDialog.Rejected:
             # キャンセルされた場合は設定値をロールバック
             self.config = backup_config
-            self.save_config()
             
             # 辞書データのロールバック（ファイルの書き戻し）
             try:
@@ -689,121 +710,91 @@ class LiveVoiceBridgeApp(QObject):
 
     def update_live_settings_from_dialog(self, dialog: SettingsDialog) -> None:
         settings = dialog.get_live_settings()
-        engine_key = settings["engine_type"]
-        current_config = settings["engine_config"]
+        engine_kind = TtsEngineKind(settings["engine_type"])
+        engine = config_from_backend(
+            engine_kind,
+            settings["engine_config"],
+            self.config.speech.engine(engine_kind),
+        )
+        current_config = backend_config(engine)
 
         if self.chat_worker is not None and self.chat_worker.isRunning():
-            self.chat_worker.skip_history = settings["skip_history"]
-            self.chat_worker.read_super_chat = settings["read_super_chat"]
-            self.chat_worker.max_length = int(current_config.get("max_length", 50))
-            self.chat_worker.read_blocks = settings["read_blocks"]
+            self.chat_worker.reconfigure(
+                skip_history=settings["skip_history"],
+                read_paid_events=settings["read_super_chat"],
+                max_length=engine.max_length,
+                read_blocks=settings["read_blocks"],
+            )
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
             self.speech_worker.word_list = settings["word_list"]
-            engine_class = tts_factory.get_engine_class(engine_key)
-            url = current_config.get("url", engine_class.DEFAULT_URL)
-            path = current_config.get("path", "")
-            device = current_config.get("device", "cpu")
-            signature = (engine_key, url, path, device)
+            signature = TtsInitializationRequest(engine).signature
 
             if (
                 self._tts_ready_signature == signature
                 and self.tts_engine is not None
                 and self.tts_engine.is_running()
             ):
-                self.speech_worker.tts_engine = self.tts_engine
-                self.speech_worker.engine_type = engine_key
-                self.speech_worker.engine_config = current_config
+                self.speech_worker.reconfigure(
+                    self.tts_engine,
+                    engine_kind.value,
+                    current_config,
+                    settings["word_list"],
+                )
             else:
                 self._request_tts_initialization(
-                    {
-                        "engine_type": engine_key,
-                        "engine_config": current_config,
-                        "url": url,
-                        "path": path,
-                        "device": device,
-                        "signature": signature,
-                    },
+                    TtsInitializationRequest(engine),
                     for_start=False,
                 )
 
-        self.config["popup_metrics"] = copy.deepcopy(settings["popup_metrics"])
         if self.comment_window is not None:
             self.comment_window.opacity = settings["comment_opacity"]
             self.comment_window.header_opacity = settings["comment_header_opacity"]
             self.comment_window.border_opacity = settings["comment_border_opacity"]
-            self.config["comment_bg_color"] = settings["comment_bg_color"]
-            self.config["comment_border_color"] = settings["comment_border_color"]
             self.comment_window.apply_metrics_settings(settings["popup_metrics"])
             self.comment_window.update()
 
-    def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
+    def restore_settings_to_threads(self, backup_config: AppConfig, backup_word_dict_data: dict) -> None:
         # スレッドのパラメータをバックアップした元の値に復元
-        engine_type = backup_config.get("tts_engine", "voicevox").lower()
-        engine_config = backup_config.get(engine_type, {})
+        engine = backup_config.speech.engine()
+        engine_config = backend_config(engine)
 
         if self.chat_worker is not None and self.chat_worker.isRunning():
-            self.chat_worker.skip_history = backup_config.get("skip_history", True)
-            self.chat_worker.read_super_chat = backup_config.get("read_super_chat", True)
-            self.chat_worker.max_length = int(engine_config.get("max_length", 50))
-            self.chat_worker.read_blocks = normalize_read_blocks(backup_config.get("read_blocks"))
+            self.chat_worker.reconfigure(
+                skip_history=backup_config.streaming.skip_history,
+                read_paid_events=backup_config.streaming.read_paid_events,
+                max_length=engine.max_length,
+                read_blocks=_read_blocks_payload(backup_config.speech.read_blocks),
+            )
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
-            self.speech_worker.engine_type = engine_type
-            self.speech_worker.engine_config = engine_config
-            # 全グループの単語をマージして適用
-            self.speech_worker.word_list = dictionary.merge_word_dict_data(backup_word_dict_data)
+            self.speech_worker.reconfigure(
+                self.tts_engine,
+                engine.kind.value,
+                engine_config,
+                dictionary.merge_word_dict_data(backup_word_dict_data),
+            )
 
         if self.comment_window is not None:
-            self.comment_window.opacity = backup_config.get("comment_opacity", 0.8)
-            self.comment_window.header_opacity = backup_config.get("comment_header_opacity", 0.8)
-            self.comment_window.border_opacity = backup_config.get("comment_border_opacity", 0.8)
-            self.config["comment_bg_color"] = backup_config.get("comment_bg_color", "#1e1e1e")
-            self.config["comment_border_color"] = backup_config.get("comment_border_color", "#3c3c3c")
-            self.comment_window.apply_metrics_settings(
-                backup_config.get("popup_metrics", {})
-            )
+            self.comment_window.opacity = backup_config.presentation.comment_opacity
+            self.comment_window.header_opacity = backup_config.presentation.header_opacity
+            self.comment_window.border_opacity = backup_config.presentation.border_opacity
+            self.comment_window.apply_metrics_settings(_popup_metrics_payload(backup_config.presentation.popup_metrics))
             self.comment_window.update()
 
-    def ensure_tts_running(
-        self,
-        url: str,
-        path: str,
-        engine_type: str | None = None,
-        device: str | None = None,
-    ) -> bool:
-        if engine_type is None:
-            engine_type = self.config.get("tts_engine", "voicevox")
-        if device is None:
-            device = self.config.get(engine_type, {}).get("device", "cpu")
-
-        self.tts_engine, success = ensure_tts_engine_running(
+    def ensure_tts_running(self, engine: EngineConfig | None = None) -> bool:
+        selected = engine or self.config.speech.engine()
+        self.tts_engine, success = self.tts_registry.ensure_ready(
             self.tts_engine,
-            url,
-            path,
-            engine_type,
+            selected,
             self.set_status,
             self.show_error,
             QApplication.processEvents,
-            device,
         )
         return success
 
-    def _selected_tts_request(self) -> dict:
-        engine_type = self.config.get("tts_engine", "voicevox").lower()
-        engine_config = self.config.get(engine_type, {})
-        engine_class = tts_factory.get_engine_class(engine_type)
-        url = engine_config.get("url", engine_class.DEFAULT_URL)
-        path = engine_config.get("path", "")
-        device = engine_config.get("device", "cpu")
-        return {
-            "engine_type": engine_type,
-            "engine_config": engine_config,
-            "url": url,
-            "path": path,
-            "device": device,
-            "signature": (engine_type, url, path, device),
-        }
+    def _selected_tts_request(self) -> TtsInitializationRequest:
+        return TtsInitializationRequest(self.config.speech.engine())
 
     def prewarm_selected_tts(self) -> None:
         request = self._selected_tts_request()
@@ -811,15 +802,17 @@ class LiveVoiceBridgeApp(QObject):
 
     def test_tts_configuration(self, request: dict, callback) -> None:
         self._pending_tts_test_callback = callback
-        self._request_tts_initialization(request, for_start=False)
+        kind = TtsEngineKind(request["engine_type"])
+        engine = config_from_backend(kind, request["engine_config"], self.config.speech.engine(kind))
+        self._request_tts_initialization(TtsInitializationRequest(engine), for_start=False)
 
     def _request_tts_initialization(
         self,
-        request: dict,
+        request: TtsInitializationRequest,
         *,
         for_start: bool,
     ) -> None:
-        signature = request["signature"]
+        signature = request.signature
         self._desired_tts_request = request
         if for_start:
             self._pending_start_request = request
@@ -845,16 +838,14 @@ class LiveVoiceBridgeApp(QObject):
             return
 
         worker = TtsInitializationWorker(
-            request["engine_type"],
-            request["url"],
-            request["path"],
-            request["device"],
+            self.tts_registry,
+            request.engine,
         )
         self.tts_init_worker = worker
         self._tts_init_signature = signature
         worker.finished.connect(self._on_tts_initialization_finished)
         self.append_log(
-            f"[情報] {tts_factory.get_engine_class(request['engine_type']).DISPLAY_NAME}"
+            f"[情報] {self.tts_registry.display_name(request.engine.kind)}"
             "をバックグラウンドで準備しています。"
         )
         if for_start:
@@ -871,7 +862,7 @@ class LiveVoiceBridgeApp(QObject):
             return
 
         desired = self._desired_tts_request
-        if desired is not None and desired["signature"] != signature:
+        if desired is not None and desired.signature != signature:
             if worker.engine is not None:
                 worker.engine.terminate()
             self._request_tts_initialization(
@@ -884,14 +875,17 @@ class LiveVoiceBridgeApp(QObject):
             previous_engine = self.tts_engine
             self.tts_engine = worker.engine
             if self.speech_worker is not None and self.speech_worker.isRunning():
-                self.speech_worker.tts_engine = worker.engine
                 active_request = self._desired_tts_request
                 if (
                     active_request is not None
-                    and active_request["signature"] == signature
+                    and active_request.signature == signature
                 ):
-                    self.speech_worker.engine_type = active_request["engine_type"]
-                    self.speech_worker.engine_config = active_request["engine_config"]
+                    self.speech_worker.reconfigure(
+                        worker.engine,
+                        active_request.engine.kind.value,
+                        backend_config(active_request.engine),
+                        self.speech_worker.word_list,
+                    )
             if previous_engine is not None and previous_engine is not worker.engine:
                 previous_engine.terminate()
             self._tts_ready_signature = signature
@@ -906,7 +900,7 @@ class LiveVoiceBridgeApp(QObject):
             self._pending_tts_test_callback = None
             if callback is not None:
                 callback(True, "")
-            if pending is not None and pending["signature"] == signature:
+            if pending is not None and pending.signature == signature:
                 self._pending_start_request = None
                 self._start_after_tts_ready(pending)
             return
@@ -915,7 +909,7 @@ class LiveVoiceBridgeApp(QObject):
             worker.engine.terminate()
         self._tts_ready_signature = None
         message = (
-            f"{tts_factory.get_engine_class(request_type).DISPLAY_NAME}"
+            f"{self.tts_registry.display_name(TtsEngineKind(request_type))}"
             "の初期化に失敗しました。"
             if (request_type := signature[0])
             else "音声合成エンジンの初期化に失敗しました。"
@@ -930,6 +924,7 @@ class LiveVoiceBridgeApp(QObject):
 
         if self._pending_start_request is not None:
             self._pending_start_request = None
+            self.application_service.mark_failed()
             self.set_running_ui(False)
             self.set_status("音声合成エンジンの初期化に失敗しました。")
             self.show_error(message)
@@ -939,7 +934,7 @@ class LiveVoiceBridgeApp(QObject):
     def start(self) -> None:
         url_or_id = self.url_line.text().strip()
         is_debug = (url_or_id.lower() == "debug")
-        api_key = self.config.get("youtube_api_key", "")
+        api_key = self.config.streaming.youtube_api_key
 
         if not url_or_id:
             QMessageBox.warning(self.window, "入力不足", "YouTube URLまたはVideo IDを入力してください。")
@@ -948,28 +943,29 @@ class LiveVoiceBridgeApp(QObject):
             QMessageBox.warning(self.window, "設定不足", "YouTube Data API Keyが設定されていません。メニューの ツール->設定 から入力してください。")
             return
 
-        # 起動前にURLを保存
-        self.config["youtube_url"] = url_or_id
-        self.save_config()
+        def begin_start() -> None:
+            self.config = replace(
+                self.config,
+                streaming=replace(self.config.streaming, youtube_source=url_or_id),
+            )
+            self.save_config()
+            request = TtsInitializationRequest(
+                self.config.speech.engine(),
+                stream_source=url_or_id,
+                api_key=api_key,
+                debug=is_debug,
+            )
+            self._request_tts_initialization(request, for_start=True)
 
-        request = self._selected_tts_request()
-        request.update({
-            "url_or_id": url_or_id,
-            "is_debug": is_debug,
-            "api_key": api_key,
-        })
-        self._request_tts_initialization(request, for_start=True)
+        self.application_service.connect_stream(begin_start)
 
-    def _start_after_tts_ready(self, request: dict) -> None:
+    def _start_after_tts_ready(self, request: TtsInitializationRequest) -> None:
         if self.tts_engine is None:
-            self.set_running_ui(False)
+            self.application_service.mark_failed()
             return
 
-        url_or_id = request["url_or_id"]
-        is_debug = request["is_debug"]
-        api_key = request["api_key"]
-        engine_type = request["engine_type"]
-        engine_config = request["engine_config"]
+        engine = request.engine
+        engine_config = backend_config(engine)
 
         # すべての辞書ファイルの読み込み・統合
         word_list = []
@@ -979,13 +975,11 @@ class LiveVoiceBridgeApp(QObject):
             self.append_log(f"[警告] 辞書ファイルの読み込みに失敗しました: {exc}")
 
         # 固有の設定オブジェクト
-        engine_key = engine_type.lower()
-
         self.speech_queue = queue.Queue()
         self.speech_worker = SpeechWorker(
             speech_queue=self.speech_queue,
             tts_engine=self.tts_engine,
-            engine_type=engine_key,
+            engine_type=engine.kind.value,
             engine_config=engine_config,
             word_list=word_list,
         )
@@ -995,21 +989,21 @@ class LiveVoiceBridgeApp(QObject):
         self.speech_worker.dict_del_requested.connect(self.on_dict_del_requested)
         self.speech_worker.start()
 
-        if is_debug:
+        if request.debug:
             self.test_comment_button.show()
             self.append_log("デバッグモードで起動しました。")
             self.set_status("デバッグモード稼働中")
-            self.set_running_ui(True)
+            self.application_service.mark_running()
             return
 
         self.chat_worker = YouTubeChatStreamWorker(
             speech_queue=self.speech_queue,
-            youtube_url_or_id=url_or_id,
-            api_key=api_key,
-            skip_history=bool(self.config.get("skip_history", True)),
-            read_super_chat=bool(self.config.get("read_super_chat", True)),
-            max_length=int(engine_config.get("max_length", 50)),
-            read_blocks=self.config.get("read_blocks"),
+            youtube_url_or_id=request.stream_source,
+            api_key=request.api_key,
+            skip_history=self.config.streaming.skip_history,
+            read_super_chat=self.config.streaming.read_paid_events,
+            max_length=engine.max_length,
+            read_blocks=_read_blocks_payload(self.config.speech.read_blocks),
         )
         self.chat_worker.comment_received.connect(self.add_comment_item)
         self.chat_worker.status.connect(self.set_status)
@@ -1018,7 +1012,7 @@ class LiveVoiceBridgeApp(QObject):
         self.chat_worker.start()
 
         self.append_log("開始しました。")
-        self.set_running_ui(True)
+        self.application_service.mark_running()
 
     def _hold_stopping_worker(self, worker: QThread) -> None:
         if worker.isFinished():
@@ -1046,7 +1040,7 @@ class LiveVoiceBridgeApp(QObject):
         else:
             self._hold_stopping_worker(worker)
 
-    def stop_all(self, wait: bool = False) -> None:
+    def _stop_components(self, wait: bool = False) -> None:
         self._pending_start_request = None
 
         self._stop_worker("chat_worker", wait)
@@ -1061,17 +1055,22 @@ class LiveVoiceBridgeApp(QObject):
             self._tts_ready_signature = None
 
         self.status_label.setText("停止中")
-        self.set_running_ui(False)
         self.test_comment_button.hide()
 
+    def stop_all(self, wait: bool = False) -> None:
+        self.application_service.disconnect_stream(lambda: self._stop_components(wait))
+
     def shutdown(self) -> None:
-        self.stop_all(wait=True)
+        self.application_service.shutdown(lambda: self._stop_components(wait=True))
         if self.tts_init_worker is not None and self.tts_init_worker.isRunning():
             self.tts_init_worker.wait()
         if self.tts_engine is not None:
             self.tts_engine.terminate()
             self.tts_engine = None
             self._tts_ready_signature = None
+        self.save_config()
+        if hasattr(self, "metrics_worker") and self.metrics_worker is not None:
+            self.metrics_worker.stop()
 
     def on_chat_finished(self) -> None:
         self.append_log("コメント受信を停止しました。")
@@ -1093,7 +1092,11 @@ class LiveVoiceBridgeApp(QObject):
         self.add_comment_item(dummy_comment)
         
         # 読み上げ文章の組み立て
-        read_text = build_read_text(self.config.get("read_blocks"), "テストユーザー", text.strip())
+        read_text = build_read_text(
+            _read_blocks_payload(self.config.speech.read_blocks),
+            "テストユーザー",
+            text.strip(),
+        )
         segments, play_files = parse_comment_into_segments(read_text)
         if not segments:
             return
@@ -1106,23 +1109,14 @@ class LiveVoiceBridgeApp(QObject):
             self.speech_queue.put(segments)
         else:
             # 停止中の場合は、必要ならエンジンを立ち上げて一時スレッドで喋らせる
-            engine_type = self.config.get("tts_engine", "voicevox").lower()
-            engine_config = self.config.get(engine_type, {})
-            engine_class = tts_factory.get_engine_class(engine_type)
-            tts_url = engine_config.get("url", engine_class.DEFAULT_URL)
-            tts_path = engine_config.get("path", "")
+            engine = self.config.speech.engine()
             
             # メインスレッドで安全に接続確認/起動を行う
-            self.ensure_tts_running(
-                tts_url,
-                tts_path,
-                engine_type,
-                engine_config.get("device", "cpu"),
-            )
+            self.ensure_tts_running(engine)
             
             # 一時読み込みに必要なパラメータを取得
-            speaker_id = int(engine_config.get("speaker_id", 1))
-            speed = float(self.config.get("speed", 1.0))
+            speaker_id = engine.speaker_id
+            speed = engine.speed
             
             word_list = []
             try:
@@ -1140,18 +1134,10 @@ class LiveVoiceBridgeApp(QObject):
         speak_segments_offline(self.tts_engine, segments, speaker_id, speed, word_list)
         self.stop_all()
 
-    def shutdown(self) -> None:
-        self.save_config()
-        if hasattr(self, "metrics_worker") and self.metrics_worker is not None:
-            try:
-                self.metrics_worker.stop()
-            except Exception:
-                pass
-
     def show(self) -> None:
         self.window.show()
         # PiPウィンドウが存在すれば一緒に表示
-        if self.comment_window is not None and self.config.get("comment_popout", False):
+        if self.comment_window is not None and self.config.presentation.comment_popout:
             self.comment_window.show()
 
 

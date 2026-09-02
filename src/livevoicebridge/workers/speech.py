@@ -1,11 +1,13 @@
+"""Speech synthesis and playback worker."""
+
 from __future__ import annotations
 
 import os
 import queue
-import time
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, Signal
 
@@ -15,7 +17,7 @@ from core.comment_processing import (
     replace_emojis,
     split_speech_segments,
 )
-from core.tts.wav_cache import TtsWavCache
+from livevoicebridge.infrastructure.wav_cache import TtsWavCache
 
 if TYPE_CHECKING:
     from core.tts.base import BaseTTSEngine
@@ -33,14 +35,14 @@ class SpeechWorker(QThread):
         tts_engine: BaseTTSEngine,
         engine_type: str,
         engine_config: dict,
-        word_list: list[dict] = None
+        word_list: list[dict] | None = None,
     ):
         super().__init__()
         self.speech_queue = speech_queue
         self.tts_engine = tts_engine
         self.engine_type = engine_type.lower()
         self.engine_config = engine_config if engine_config is not None else {}
-        self._word_list = []
+        self._word_list: list[dict] = []
         self._word_matcher = DictionaryMatcher()
         self.word_list = word_list if word_list is not None else []
         self.wav_cache = TtsWavCache()
@@ -62,6 +64,18 @@ class SpeechWorker(QThread):
         self.speech_queue.put(None)
         self.executor.shutdown(wait=False, cancel_futures=True)
 
+    def reconfigure(
+        self,
+        tts_engine: BaseTTSEngine,
+        engine_type: str,
+        engine_config: dict,
+        word_list: list[dict],
+    ) -> None:
+        self.tts_engine = tts_engine
+        self.engine_type = engine_type.lower()
+        self.engine_config = dict(engine_config)
+        self.word_list = word_list
+
     def run(self) -> None:
         while self._running:
             item = self.speech_queue.get()
@@ -81,12 +95,9 @@ class SpeechWorker(QThread):
         sentences = split_speech_segments(segments)
         planned = [self._prepare_sentence(segment) for segment in sentences]
         units = self._build_playback_units(planned)
-        futures = [
-            self.executor.submit(self._render_playback_unit, unit)
-            for unit in units
-        ]
+        futures = [self.executor.submit(self._render_playback_unit, unit) for unit in units]
 
-        for unit, future in zip(units, futures):
+        for unit, future in zip(units, futures, strict=True):
             if not self._running:
                 break
             try:
@@ -129,31 +140,41 @@ class SpeechWorker(QThread):
     @staticmethod
     def _settings_key(segment: dict) -> tuple:
         params = segment["params"]
-        return tuple(params.get(key) for key in (
-            "speaker_id", "speed", "pitch", "intonation", "volume",
-            "pause_length", "pre_phoneme_length", "post_phoneme_length",
-            "echo", "yamabiko", "panning",
-        ))
+        return tuple(
+            params.get(key)
+            for key in (
+                "speaker_id",
+                "speed",
+                "pitch",
+                "intonation",
+                "volume",
+                "pause_length",
+                "pre_phoneme_length",
+                "post_phoneme_length",
+                "echo",
+                "yamabiko",
+                "panning",
+            )
+        )
 
     def _build_playback_units(self, segments: list[dict]) -> list[dict]:
         units = []
-        pending = []
+        pending: list[dict] = []
         for segment in segments:
             if segment["content"] is not None:
                 if pending:
                     units.append(self._make_miss_unit(pending))
                     pending = []
-                units.append({
-                    "kind": "cache",
-                    "text": segment["text"],
-                    "segments": [segment],
-                    "content": segment["content"],
-                })
+                units.append(
+                    {
+                        "kind": "cache",
+                        "text": segment["text"],
+                        "segments": [segment],
+                        "content": segment["content"],
+                    }
+                )
             else:
-                if (
-                    segment["request_count"] >= 2
-                    or segment["unit_type"] == "fixed_phrase"
-                ):
+                if segment["request_count"] >= 2 or segment["unit_type"] == "fixed_phrase":
                     if pending:
                         units.append(self._make_miss_unit(pending))
                         pending = []
@@ -182,10 +203,7 @@ class SpeechWorker(QThread):
             content = unit["content"]
             self.log.emit(f"[SpeechWorker] キャッシュ再生: {unit['text']}")
         else:
-            self.log.emit(
-                f"[SpeechWorker] TTS生成単位: {unit['text']} "
-                f"(文数: {len(unit['segments'])})"
-            )
+            self.log.emit(f"[SpeechWorker] TTS生成単位: {unit['text']} (文数: {len(unit['segments'])})")
             content = self._generate_content(unit["text"], params)
             if content and len(unit["segments"]) == 1:
                 self.wav_cache.store_generated(
@@ -215,11 +233,12 @@ class SpeechWorker(QThread):
         speed = segment.get("speed")
         pitch = segment.get("pitch")
         volume = segment.get("volume")
+        speaker_id = segment.get("speaker_id")
         return {
-            "speaker_id": segment.get("speaker_id") if segment.get("speaker_id") is not None else int(cfg.get("speaker_id", 0)),
-            "speed": int(speed) if bouyomi and speed is not None else (-1 if bouyomi else float(speed) if speed is not None else float(cfg.get("speed", 1.0) or 1.0)),
-            "pitch": int(pitch) if bouyomi and pitch is not None else (-1 if bouyomi else float(pitch) if pitch is not None else float(cfg.get("pitch", 0.0) or 0.0)),
-            "volume": int(volume) if bouyomi and volume is not None else (-1 if bouyomi else float(volume) if volume is not None else float(cfg.get("volume", 1.0) or 1.0)),
+            "speaker_id": speaker_id if speaker_id is not None else int(cfg.get("speaker_id", 0)),
+            "speed": self._resolve_number(speed, cfg.get("speed"), 1.0, bouyomi),
+            "pitch": self._resolve_number(pitch, cfg.get("pitch"), 0.0, bouyomi),
+            "volume": self._resolve_number(volume, cfg.get("volume"), 1.0, bouyomi),
             "intonation": cfg.get("intonation"),
             "pause_length": cfg.get("pause_length"),
             "pre_phoneme_length": cfg.get("pre_phoneme_length"),
@@ -228,6 +247,13 @@ class SpeechWorker(QThread):
             "yamabiko": segment.get("yamabiko"),
             "panning": segment.get("panning"),
         }
+
+    @staticmethod
+    def _resolve_number(value: Any, configured: Any, default: float, bouyomi: bool) -> int | float:
+        selected = value if value is not None else configured
+        if bouyomi:
+            return int(selected) if selected is not None else -1
+        return float(selected) if selected is not None else default
 
     def _build_cache_request(self, text: str, params: dict) -> dict:
         cfg = self.engine_config
@@ -281,43 +307,42 @@ class SpeechWorker(QThread):
     def synthesize_wav(
         self,
         text: str,
-        speed: float = None,
-        pitch: float = None,
-        volume: float = None,
-        speaker_id: int = None,
-        echo: int = None,
-        yamabiko: int = None,
-        panning: str = None,
+        speed: float | None = None,
+        pitch: float | None = None,
+        volume: float | None = None,
+        speaker_id: int | None = None,
+        echo: int | None = None,
+        yamabiko: int | None = None,
+        panning: str | None = None,
     ) -> str | None:
         try:
             self.log.emit(f"[SpeechWorker] 音声合成リクエスト送信: '{text}'")
             text = self._word_matcher.replace(text)
             text = replace_emojis(text)
 
-            # 各パラメータについて、セグメントからの個別指定がなければ engine_config から、それも無ければ合理的なデフォルト値を取得
             cfg = self.engine_config
-            
+
             # 話者 ID
             target_speaker = speaker_id if speaker_id is not None else int(cfg.get("speaker_id", 0))
-            
+
             # 話速
             target_speed = speed if speed is not None else cfg.get("speed")
-            
+
             # 音高
             target_pitch = pitch if pitch is not None else cfg.get("pitch")
-            
+
             # 音量
             target_volume = volume if volume is not None else cfg.get("volume")
-            
+
             # 抑揚
             target_intonation = cfg.get("intonation")
-            
+
             # 間長 (pause_length)
             target_pause_length = cfg.get("pause_length")
-            
+
             # 開始無音 (pre_phoneme_length)
             target_pre_phoneme_length = cfg.get("pre_phoneme_length")
-            
+
             # 終了無音 (post_phoneme_length)
             target_post_phoneme_length = cfg.get("post_phoneme_length")
 
@@ -335,7 +360,11 @@ class SpeechWorker(QThread):
                 target_pitch = float(target_pitch) if target_pitch is not None else 0.0
                 target_volume = float(target_volume) if target_volume is not None else 1.0
 
-            self.log.emit(f"[SpeechWorker] 合成パラメータ -> speaker: {target_speaker}, speed: {target_speed}, pitch: {target_pitch}, volume: {target_volume}")
+            self.log.emit(
+                "[SpeechWorker] 合成パラメータ -> "
+                f"speaker: {target_speaker}, speed: {target_speed}, "
+                f"pitch: {target_pitch}, volume: {target_volume}"
+            )
 
             unit_type = self.wav_cache.classify_unit(text)
             cache_request = {
@@ -354,11 +383,9 @@ class SpeechWorker(QThread):
                 "num_steps": int(cfg.get("num_steps", 8)) if self.engine_type == "supertonic" else None,
                 "lang": "ja",
             }
-            cache_key, request_count, content, cache_level = (
-                self.wav_cache.record_and_lookup(
-                    unit_type,
-                    cache_request,
-                )
+            cache_key, request_count, content, cache_level = self.wav_cache.record_and_lookup(
+                unit_type,
+                cache_request,
             )
             if content is not None:
                 self.log.emit(
@@ -392,10 +419,7 @@ class SpeechWorker(QThread):
                             f"{cache_path})"
                         )
                     else:
-                        self.log.emit(
-                            f"[SpeechWorker] WAVキャッシュ未保存 "
-                            f"(初回使用、使用回数: {request_count})"
-                        )
+                        self.log.emit(f"[SpeechWorker] WAVキャッシュ未保存 (初回使用、使用回数: {request_count})")
                 else:
                     self.wav_cache.record_failure(cache_key)
 
@@ -416,13 +440,13 @@ class SpeechWorker(QThread):
     def speak(
         self,
         text: str,
-        speed: float = None,
-        pitch: float = None,
-        volume: float = None,
-        speaker_id: int = None,
-        echo: int = None,
-        yamabiko: int = None,
-        panning: str = None,
+        speed: float | None = None,
+        pitch: float | None = None,
+        volume: float | None = None,
+        speaker_id: int | None = None,
+        echo: int | None = None,
+        yamabiko: int | None = None,
+        panning: str | None = None,
     ) -> None:
         wav_path = self.synthesize_wav(
             text,

@@ -5,6 +5,7 @@ import platform
 import tarfile
 import urllib.request
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QObject, QPoint, Signal, Qt, QThread, QUrl
@@ -48,8 +49,7 @@ if TYPE_CHECKING:
     from livevoicebridge.application.runtime import LiveVoiceBridgeApp
     from core.tts.base import BaseTTSEngine
  
-import core.dictionary as dictionary
-import core.tts.factory as tts_factory
+import livevoicebridge.infrastructure.dictionary_repository as dictionary
 from core.speakers.utils import SPEAKER_GROUP_ORDER, group_speakers_by_kana, speaker_sort_key
 
 from core.ui.delegates import HiraganaDelegate
@@ -57,6 +57,71 @@ from core.ui.read_blocks import PlaceholderFrame, ReadBlockFrame
 from core.ui.popup_metrics import POPUP_METRIC_MODES, POPUP_METRIC_PLACEMENTS
 from core.tts.engines.supertonic import SupertonicEngine
 from core.tts.engines.supertonic_lightweight import SupertonicLightweightEngine
+from livevoicebridge.application.models import (
+    ApplicationConfig,
+    DictionaryConfig,
+    EngineConfig,
+    PopupMetricsConfig,
+    PresentationConfig,
+    ReadBlock,
+    ReadBlockKind,
+    SpeechConfig,
+    StreamingConfig,
+    TtsEngineKind,
+)
+from livevoicebridge.infrastructure.tts.registry import config_from_backend
+
+
+def _engine_form(config: EngineConfig) -> dict:
+    return {
+        "url": config.url,
+        "path": config.model_path or config.executable_path,
+        "speaker_id": config.speaker_id,
+        "speed": config.speed,
+        "pitch": config.pitch,
+        "intonation": config.intonation,
+        "volume": config.volume,
+        "pause_length": config.pause_length,
+        "pre_phoneme_length": config.pre_phoneme_length,
+        "post_phoneme_length": config.post_phoneme_length,
+        "max_length": config.max_length,
+        "num_steps": config.num_steps,
+        "num_threads": config.num_threads,
+        "device": config.device,
+        "device_policy": config.device_policy,
+        "device_priority": list(config.device_priority),
+        "backend": config.backend,
+    }
+
+
+def _read_block_forms(blocks: tuple[ReadBlock, ...]) -> list[dict[str, str]]:
+    return [
+        {"type": block.kind.value, **({"value": block.value} if block.kind is ReadBlockKind.TEXT else {})}
+        for block in blocks
+    ]
+
+
+def _engine_from_form(existing: EngineConfig, form: dict) -> EngineConfig:
+    path = str(form.get("path", ""))
+    local = existing.kind in {TtsEngineKind.SUPERTONIC, TtsEngineKind.SUPERTONIC_LIGHTWEIGHT}
+    return replace(
+        existing,
+        url=str(form.get("url", existing.url)),
+        executable_path="" if local else path,
+        model_path=path if local else "",
+        speaker_id=int(form.get("speaker_id", existing.speaker_id)),
+        speed=float(form.get("speed", existing.speed)),
+        pitch=float(form.get("pitch", existing.pitch)),
+        intonation=form.get("intonation"),
+        volume=float(form.get("volume", existing.volume)),
+        pause_length=form.get("pause_length"),
+        pre_phoneme_length=form.get("pre_phoneme_length"),
+        post_phoneme_length=form.get("post_phoneme_length"),
+        max_length=int(form.get("max_length", existing.max_length)),
+        num_steps=form.get("num_steps"),
+        num_threads=form.get("num_threads"),
+        device=str(form.get("device", existing.device)),
+    )
 
 
 class SettingsDialog(QObject):
@@ -453,73 +518,17 @@ class SettingsDialog(QObject):
 
     def load_settings(self) -> None:
         env_key = os.environ.get("YOUTUBE_API_KEY", "")
-        self.api_key_line.setText(self.main_app.config.get("youtube_api_key", env_key))
+        config = self.main_app.config
+        self.api_key_line.setText(config.streaming.youtube_api_key or env_key)
+        self.current_active_engine = config.speech.active_engine.value
+        for engine in config.speech.engines:
+            self.engine_settings[engine.kind.value].update(_engine_form(engine))
 
-        # 設定から各エンジン固有のパラメータをロード（旧キーからの移行も兼ねる）
-        self.current_active_engine = self.main_app.config.get("tts_engine", "voicevox").lower()
-
-        # VOICEVOX設定の読み込み
-        vv_config = self.main_app.config.get("voicevox", {})
         vv = self.engine_settings["voicevox"]
-        vv["url"] = vv_config.get("url", "http://127.0.0.1:50021")
-        vv["path"] = vv_config.get("path", "")
-        vv["speaker_id"] = int(vv_config.get("speaker_id", 1))
-        vv["speed"] = float(vv_config.get("speed", 1.0))
-        vv["pitch"] = float(vv_config.get("pitch", 0.0))
-        vv["intonation"] = float(vv_config.get("intonation", 1.0))
-        vv["volume"] = float(vv_config.get("volume", 1.0))
-        vv["pause_length"] = float(vv_config.get("pause_length", 1.0))
-        vv["pre_phoneme_length"] = float(vv_config.get("pre_phoneme_length", 0.1))
-        vv["post_phoneme_length"] = float(vv_config.get("post_phoneme_length", 0.1))
-        vv["max_length"] = int(vv_config.get("max_length", 50))
-
-        # COEIROINK設定の読み込み
-        coe_config = self.main_app.config.get("coeiroink", {})
         coe = self.engine_settings["coeiroink"]
-        coe["url"] = coe_config.get("url", "http://127.0.0.1:50032")
-        coe["path"] = coe_config.get("path", "")
-        coe["speaker_id"] = int(coe_config.get("speaker_id", 1))
-        coe["speed"] = float(coe_config.get("speed", 1.0))
-        coe["pitch"] = float(coe_config.get("pitch", 0.0))
-        coe["intonation"] = float(coe_config.get("intonation", 1.0))
-        coe["volume"] = float(coe_config.get("volume", 1.0))
-        coe["pause_length"] = float(coe_config.get("pause_length", 1.0))
-        coe["pre_phoneme_length"] = float(coe_config.get("pre_phoneme_length", 0.1))
-        coe["post_phoneme_length"] = float(coe_config.get("post_phoneme_length", 0.1))
-        coe["max_length"] = int(coe_config.get("max_length", 50))
-
-        # 棒読みちゃん設定の読み込み
-        bouyomi_config = self.main_app.config.get("bouyomichan", {})
         bc = self.engine_settings["bouyomichan"]
-        bc["url"] = bouyomi_config.get("url", "127.0.0.1:50001")
-        bc["path"] = bouyomi_config.get("path", "")
-        bc["speaker_id"] = int(bouyomi_config.get("speaker_id", 0))
-        bc["speed"] = int(bouyomi_config.get("speed", -1))
-        bc["pitch"] = int(bouyomi_config.get("pitch", -1))
-        bc["volume"] = int(bouyomi_config.get("volume", -1))
-        bc["max_length"] = int(bouyomi_config.get("max_length", 50))
-
-        # Supertonic 3 軽量版設定の読み込み
-        st_config = self.main_app.config.get("supertonic_lightweight", {})
         st = self.engine_settings["supertonic_lightweight"]
-        st["url"] = st_config.get("url", "local://supertonic-lightweight")
-        st["path"] = st_config.get("path", "models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11")
-        st["speaker_id"] = int(st_config.get("speaker_id", 0))
-        st["speed"] = float(st_config.get("speed", 1.0))
-        st["volume"] = float(st_config.get("volume", 1.0))
-        st["max_length"] = int(st_config.get("max_length", 50))
-
-        # Supertonic 3設定の読み込み
-        st_config = self.main_app.config.get("supertonic", {})
         supertonic = self.engine_settings["supertonic"]
-        supertonic["url"] = "local://supertonic"
-        supertonic["path"] = st_config.get("path", "models/supertonic-3")
-        supertonic["speaker_id"] = int(st_config.get("speaker_id", 0))
-        supertonic["speed"] = float(st_config.get("speed", 1.0))
-        supertonic["volume"] = float(st_config.get("volume", 1.0))
-        supertonic["max_length"] = int(st_config.get("max_length", 50))
-        supertonic["num_steps"] = int(st_config.get("num_steps", 8))
-        supertonic["device"] = st_config.get("device", "cpu")
 
         # VOICEVOX ウィジェットへの適用
         self.vv_url_line.setText(vv["url"])
@@ -577,10 +586,10 @@ class SettingsDialog(QObject):
         if idx >= 0:
             self.tts_engine_combo.setCurrentIndex(idx)
 
-        self.skip_history_check.setChecked(bool(self.main_app.config.get("skip_history", True)))
-        self.read_super_chat_check.setChecked(bool(self.main_app.config.get("read_super_chat", True)))
-        self.check_updates_check.setChecked(bool(self.main_app.config.get("check_updates", True)))
-        self.set_read_blocks(self.main_app.config.get("read_blocks"))
+        self.skip_history_check.setChecked(config.streaming.skip_history)
+        self.read_super_chat_check.setChecked(config.streaming.read_paid_events)
+        self.check_updates_check.setChecked(config.application.check_updates)
+        self.set_read_blocks(_read_block_forms(config.speech.read_blocks))
 
         # 読み替え辞書のロード
         self.word_dict = self.main_app.load_all_word_dict_data()
@@ -590,7 +599,7 @@ class SettingsDialog(QObject):
         self.group_combo.clear()
         self.group_combo.addItems(list(self.word_dict.keys()))
         
-        active_group = self.main_app.config.get("dict_group", "デフォルト")
+        active_group = config.dictionary.active_group
         if active_group not in self.word_dict:
             active_group = list(self.word_dict.keys())[0] if self.word_dict else ""
         
@@ -601,39 +610,34 @@ class SettingsDialog(QObject):
 
         self.display_words_for_group()
 
-        opacity = int(self.main_app.config.get("comment_opacity", 0.8) * 100)
+        opacity = int(config.presentation.comment_opacity * 100)
         self.opacity_slider.setValue(opacity)
         self.opacity_spin.setValue(opacity)
 
-        header_opacity = int(self.main_app.config.get("comment_header_opacity", 0.8) * 100)
+        header_opacity = int(config.presentation.header_opacity * 100)
         self.header_opacity_slider.setValue(header_opacity)
         self.header_opacity_spin.setValue(header_opacity)
 
-        border_opacity = int(self.main_app.config.get("comment_border_opacity", 0.8) * 100)
+        border_opacity = int(config.presentation.border_opacity * 100)
         self.border_opacity_slider.setValue(border_opacity)
         self.border_opacity_spin.setValue(border_opacity)
 
-        self.bg_color_hex = self.main_app.config.get("comment_bg_color", "#1e1e1e")
-        self.border_color_hex = self.main_app.config.get("comment_border_color", "#3c3c3c")
+        self.bg_color_hex = config.presentation.background_color
+        self.border_color_hex = config.presentation.border_color
         self.update_color_button_style(self.bg_color_button, self.bg_color_hex)
         self.update_color_button_style(self.border_color_button, self.border_color_hex)
 
-        popup_metrics = self.main_app.config.get("popup_metrics", {})
+        popup_metrics = config.presentation.popup_metrics
         placement_index = self.popup_metrics_placement_combo.findData(
-            popup_metrics.get("placement", "top")
+            popup_metrics.placement
         )
         self.popup_metrics_placement_combo.setCurrentIndex(
             placement_index if placement_index >= 0 else 0
         )
-        display_modes = popup_metrics.get("display_modes", {})
-        self._popup_metric_display_modes = (
-            dict(display_modes) if isinstance(display_modes, dict) else {}
-        )
+        self._popup_metric_display_modes = dict(popup_metrics.display_modes)
         self.refresh_popup_metric_catalog(getattr(self.main_app, "metric_catalog", []))
 
     def save_settings(self) -> None:
-        self.main_app.config["youtube_api_key"] = self.api_key_line.text().strip()
-
         # 各個別の設定値を画面から取得して engine_settings バッファへ格納
         # VOICEVOX
         self.engine_settings["voicevox"].update({
@@ -690,36 +694,55 @@ class SettingsDialog(QObject):
             "device": self.st_device_combo.currentData(),
         })
 
-        # config に保存
-        self.main_app.config["voicevox"] = self.engine_settings["voicevox"]
-        self.main_app.config["coeiroink"] = self.engine_settings["coeiroink"]
-        self.main_app.config["bouyomichan"] = self.engine_settings["bouyomichan"]
-        self.main_app.config["supertonic_lightweight"] = self.engine_settings["supertonic_lightweight"]
-        self.main_app.config["supertonic"] = self.engine_settings["supertonic"]
-
-        self.main_app.config["skip_history"] = self.skip_history_check.isChecked()
-        self.main_app.config["read_super_chat"] = self.read_super_chat_check.isChecked()
-        self.main_app.config["read_blocks"] = self.get_read_blocks()
-        self.main_app.config["check_updates"] = self.check_updates_check.isChecked()
-
         # 読み替え辞書のセーブ
         if self.current_active_group_name:
             self.update_current_group_data_for(self.current_active_group_name)
         
-        active_group = self.group_combo.currentText()
-        if active_group:
-            self.main_app.config["dict_group"] = active_group
-
-        self.main_app.config["comment_opacity"] = self.opacity_slider.value() / 100.0
-        self.main_app.config["comment_header_opacity"] = self.header_opacity_slider.value() / 100.0
-        self.main_app.config["comment_border_opacity"] = self.border_opacity_slider.value() / 100.0
-        self.main_app.config["comment_bg_color"] = self.bg_color_hex
-        self.main_app.config["comment_border_color"] = self.border_color_hex
-        self.main_app.config["popup_metrics"] = self.get_popup_metrics_settings()
-        
-        # コンボボックスからキー名を取得して tts_engine に設定
-        self.main_app.config["tts_engine"] = self._get_engine_key(self.tts_engine_combo.currentText())
-        self.main_app.save_config()
+        current = self.main_app.config
+        engines = tuple(
+            _engine_from_form(engine, self.engine_settings[engine.kind.value])
+            for engine in current.speech.engines
+        )
+        blocks = tuple(
+            ReadBlock(ReadBlockKind(item["type"]), str(item.get("value", "")))
+            for item in self.get_read_blocks()
+        )
+        popup = self.get_popup_metrics_settings()
+        active_group = self.group_combo.currentText() or current.dictionary.active_group
+        updated = replace(
+            current,
+            streaming=StreamingConfig(
+                youtube_api_key=self.api_key_line.text().strip(),
+                youtube_source=current.streaming.youtube_source,
+                skip_history=self.skip_history_check.isChecked(),
+                read_paid_events=self.read_super_chat_check.isChecked(),
+            ),
+            speech=SpeechConfig(
+                active_engine=TtsEngineKind(self._get_engine_key(self.tts_engine_combo.currentText())),
+                engines=engines,
+                read_blocks=blocks or (ReadBlock(ReadBlockKind.MESSAGE),),
+            ),
+            presentation=replace(
+                current.presentation,
+                comment_opacity=self.opacity_slider.value() / 100.0,
+                header_opacity=self.header_opacity_slider.value() / 100.0,
+                border_opacity=self.border_opacity_slider.value() / 100.0,
+                background_color=self.bg_color_hex,
+                border_color=self.border_color_hex,
+                popup_metrics=PopupMetricsConfig(
+                    placement=str(popup["placement"]),
+                    vertical_ratio=float(popup["vertical_ratio"]),
+                    horizontal_ratio=float(popup["horizontal_ratio"]),
+                    display_modes=tuple(sorted(dict(popup["display_modes"]).items())),
+                ),
+            ),
+            dictionary=DictionaryConfig(active_group=active_group),
+            application=ApplicationConfig(
+                check_updates=self.check_updates_check.isChecked(),
+                use_ime=current.application.use_ime,
+            ),
+        )
+        self.main_app.replace_config(updated)
 
         try:
             dictionary.save_word_dict_data(self.word_dict)
@@ -952,14 +975,14 @@ class SettingsDialog(QObject):
         return modes
 
     def get_popup_metrics_settings(self) -> dict:
-        current = self.main_app.config.get("popup_metrics", {})
+        current = self.main_app.config.presentation.popup_metrics
         placement = self.popup_metrics_placement_combo.currentData()
         if placement not in POPUP_METRIC_PLACEMENTS:
             placement = "top"
         return {
             "placement": placement,
-            "vertical_ratio": float(current.get("vertical_ratio", 0.35)),
-            "horizontal_ratio": float(current.get("horizontal_ratio", 0.35)),
+            "vertical_ratio": current.vertical_ratio,
+            "horizontal_ratio": current.horizontal_ratio,
             "display_modes": self.get_popup_display_modes(),
         }
 
@@ -1219,11 +1242,13 @@ class SettingsDialog(QObject):
             self.speaker_button.setText(f"カスタム (ID: {speaker_id})")
 
     def get_engine_instance(self, url: str, exe_path: str) -> BaseTTSEngine:
-        return tts_factory.get_engine_instance(
-            self.current_active_engine,
-            url,
-            exe_path,
+        kind = TtsEngineKind(self.current_active_engine)
+        config = config_from_backend(
+            kind,
+            {"url": url, "path": exe_path},
+            self.main_app.config.speech.engine(kind),
         )
+        return self.main_app.tts_registry.create(config)
 
     def _fetch_speaker_data(
         self,

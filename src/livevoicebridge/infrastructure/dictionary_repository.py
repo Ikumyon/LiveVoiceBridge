@@ -1,8 +1,10 @@
 import csv
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
-from core.app_config import DICT_DIR, DEFAULT_WORD_LIST
+from core.app_config import DEFAULT_WORD_LIST, DICT_DIR
+from livevoicebridge.application.models import DictionaryEntry
 
 
 def ensure_default_dictionary() -> None:
@@ -25,13 +27,13 @@ def load_all_word_dict_data() -> dict[str, list[dict]]:
             for json_file in DICT_DIR.glob("*.json"):
                 group_name = json_file.stem
                 try:
-                    with open(json_file, "r", encoding="utf-8") as f:
+                    with open(json_file, encoding="utf-8") as f:
                         data[group_name] = json.load(f)
                 except Exception as e:
                     print(f"辞書ファイル {json_file.name} のロード失敗: {e}")
     except Exception as e:
         print(f"辞書ディレクトリ走査失敗: {e}")
-    
+
     if not data:
         data["デフォルト"] = DEFAULT_WORD_LIST.copy()
     return data
@@ -67,7 +69,7 @@ def save_word_dict_data(word_dict: dict[str, list[dict]]) -> None:
             dest_file = DICT_DIR / f"{group_name}.json"
             with open(dest_file, "w", encoding="utf-8") as f:
                 json.dump(words, f, ensure_ascii=False, indent=2)
-        
+
         # メモリ上にない（＝削除された）辞書ファイルを物理削除
         for json_file in DICT_DIR.glob("*.json"):
             if json_file.stem not in word_dict:
@@ -76,29 +78,24 @@ def save_word_dict_data(word_dict: dict[str, list[dict]]) -> None:
                 except Exception:
                     pass
     except Exception as exc:
-        raise RuntimeError(f"辞書ファイルの保存に失敗しました: {exc}")
+        raise RuntimeError(f"辞書ファイルの保存に失敗しました: {exc}") from exc
 
 
 def add_word_to_group(group_name: str, word: str, reading: str, pos: str = "名詞", comment: str = "") -> list[dict]:
     """指定された辞書グループファイルに単語を追加（重複は排除）し、更新されたリストを返す。"""
     DICT_DIR.mkdir(parents=True, exist_ok=True)
     dict_file = DICT_DIR / f"{group_name}.json"
-    
+
     if dict_file.exists():
-        with open(dict_file, "r", encoding="utf-8") as f:
+        with open(dict_file, encoding="utf-8") as f:
             words = json.load(f)
     else:
         words = []
-        
+
     # 重複防止：既に同じ単語があれば削除
     words = [w for w in words if w.get("word") != word]
-    words.append({
-        "word": word,
-        "reading": reading,
-        "pos": pos,
-        "comment": comment
-    })
-    
+    words.append({"word": word, "reading": reading, "pos": pos, "comment": comment})
+
     with open(dict_file, "w", encoding="utf-8") as f:
         json.dump(words, f, ensure_ascii=False, indent=2)
     return words
@@ -108,17 +105,17 @@ def delete_word_from_group(group_name: str, word: str) -> list[dict] | None:
     """指定された辞書グループファイルから単語を削除し、更新されたリストを返す。見つからない場合は None を返す。"""
     DICT_DIR.mkdir(parents=True, exist_ok=True)
     dict_file = DICT_DIR / f"{group_name}.json"
-    
+
     if not dict_file.exists():
         return None
-        
-    with open(dict_file, "r", encoding="utf-8") as f:
+
+    with open(dict_file, encoding="utf-8") as f:
         words = json.load(f)
-        
+
     new_words = [w for w in words if w.get("word") != word]
     if len(new_words) == len(words):
         return None
-        
+
     with open(dict_file, "w", encoding="utf-8") as f:
         json.dump(new_words, f, ensure_ascii=False, indent=2)
     return new_words
@@ -139,7 +136,7 @@ def load_import_word_list(file_path: str) -> list[dict]:
 
 
 def _load_json_word_list(path: Path) -> list[dict]:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     words = []
@@ -147,43 +144,49 @@ def _load_json_word_list(path: Path) -> list[dict]:
         for item in data:
             if not isinstance(item, dict):
                 continue
-            words.append({
-                "reading": item.get("reading", ""),
-                "word": item.get("word", ""),
-                "pos": item.get("pos", "名詞"),
-                "comment": item.get("comment", ""),
-            })
+            words.append(
+                {
+                    "reading": item.get("reading", ""),
+                    "word": item.get("word", ""),
+                    "pos": item.get("pos", "名詞"),
+                    "comment": item.get("comment", ""),
+                }
+            )
     elif isinstance(data, dict):
         for word, reading in data.items():
-            words.append({
-                "reading": str(reading),
-                "word": str(word),
-                "pos": "名詞",
-                "comment": "",
-            })
+            words.append(
+                {
+                    "reading": str(reading),
+                    "word": str(word),
+                    "pos": "名詞",
+                    "comment": "",
+                }
+            )
     return words
 
 
 def _load_csv_word_list(path: Path) -> list[dict]:
     words = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         reader = csv.reader(f)
         for row_data in reader:
             if not row_data:
                 continue
-            words.append({
-                "reading": row_data[0] if len(row_data) > 0 else "",
-                "word": row_data[1] if len(row_data) > 1 else "",
-                "pos": row_data[2] if len(row_data) > 2 else "名詞",
-                "comment": row_data[3] if len(row_data) > 3 else "",
-            })
+            words.append(
+                {
+                    "reading": row_data[0] if len(row_data) > 0 else "",
+                    "word": row_data[1] if len(row_data) > 1 else "",
+                    "pos": row_data[2] if len(row_data) > 2 else "名詞",
+                    "comment": row_data[3] if len(row_data) > 3 else "",
+                }
+            )
     return words
 
 
 def _load_text_word_list(path: Path) -> list[dict]:
     words = []
     encoding = _detect_text_dictionary_encoding(path)
-    with open(path, "r", encoding=encoding, errors="ignore") as f:
+    with open(path, encoding=encoding, errors="ignore") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("!") or line.startswith("#"):
@@ -193,12 +196,14 @@ def _load_text_word_list(path: Path) -> list[dict]:
             if len(row_data) < 2:
                 continue
 
-            words.append({
-                "reading": row_data[0].strip(),
-                "word": row_data[1].strip(),
-                "pos": row_data[2].strip() if len(row_data) > 2 else "名詞",
-                "comment": row_data[3].strip() if len(row_data) > 3 else "",
-            })
+            words.append(
+                {
+                    "reading": row_data[0].strip(),
+                    "word": row_data[1].strip(),
+                    "pos": row_data[2].strip() if len(row_data) > 2 else "名詞",
+                    "comment": row_data[3].strip() if len(row_data) > 3 else "",
+                }
+            )
     return words
 
 
@@ -206,10 +211,55 @@ def _detect_text_dictionary_encoding(path: Path) -> str:
     encoding = "shift_jis"
     for candidate in ["shift_jis", "utf-16", "utf-8"]:
         try:
-            with open(path, "r", encoding=candidate) as f:
+            with open(path, encoding=candidate) as f:
                 f.readline()
             encoding = candidate
             break
         except Exception:
             continue
     return encoding
+
+
+class JsonDictionaryRepository:
+    """Typed facade over the official per-group dictionary files."""
+
+    def groups(self) -> tuple[str, ...]:
+        return tuple(load_all_word_dict_data())
+
+    def load_group(self, group: str) -> tuple[DictionaryEntry, ...]:
+        data = load_all_word_dict_data().get(group, [])
+        return tuple(_entry_from_document(item) for item in data)
+
+    def load_all(self) -> dict[str, tuple[DictionaryEntry, ...]]:
+        return {
+            group: tuple(_entry_from_document(item) for item in entries)
+            for group, entries in load_all_word_dict_data().items()
+        }
+
+    def save_group(self, group: str, entries: Iterable[DictionaryEntry]) -> None:
+        data = load_all_word_dict_data()
+        data[group] = [_entry_to_document(entry) for entry in entries]
+        save_word_dict_data(data)
+
+    def delete_group(self, group: str) -> None:
+        data = load_all_word_dict_data()
+        data.pop(group, None)
+        save_word_dict_data(data)
+
+
+def _entry_from_document(item: dict) -> DictionaryEntry:
+    return DictionaryEntry(
+        word=str(item.get("word", "")),
+        reading=str(item.get("reading", "")),
+        part_of_speech=str(item.get("pos", "名詞")),
+        comment=str(item.get("comment", "")),
+    )
+
+
+def _entry_to_document(entry: DictionaryEntry) -> dict[str, str]:
+    return {
+        "word": entry.word,
+        "reading": entry.reading,
+        "pos": entry.part_of_speech,
+        "comment": entry.comment,
+    }

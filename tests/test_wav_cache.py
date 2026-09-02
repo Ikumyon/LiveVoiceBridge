@@ -5,7 +5,7 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
-from core.tts import wav_cache
+from livevoicebridge.infrastructure import wav_cache
 
 
 def _wav_bytes() -> bytes:

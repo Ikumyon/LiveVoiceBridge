@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 
 from core.streaming.youtube.url import extract_video_id
-from core.streaming.youtube.worker import (
+from livevoicebridge.infrastructure.streaming.youtube import (
     MEMBER_MILESTONE_CHAT_EVENT,
     SUPER_CHAT_EVENT,
     SUPER_STICKER_EVENT,
