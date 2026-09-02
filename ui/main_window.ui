@@ -100,6 +100,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="testCommentButton">
+        <property name="visible">
+         <bool>false</bool>
+        </property>
+        <property name="text">
+         <string>テスト送信</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="buttonSpacer">
         <property name="orientation">
          <enum>Qt::Orientation::Horizontal</enum>
@@ -133,6 +143,44 @@
        <layout class="QVBoxLayout" name="commentTabLayout">
         <item>
           <widget class="QListWidget" name="commentListWidget"/>
+        </item>
+        <item>
+         <widget class="QWidget" name="commentPopoutPlaceholder">
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <layout class="QVBoxLayout" name="commentPopoutPlaceholderLayout">
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignCenter</set>
+           </property>
+           <item>
+            <widget class="QLabel" name="commentPopoutIconLabel">
+             <property name="minimumSize">
+              <size><width>64</width><height>64</height></size>
+             </property>
+             <property name="maximumSize">
+              <size><width>64</width><height>64</height></size>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignmentFlag::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="commentPopoutTextLabel">
+             <property name="styleSheet">
+              <string notr="true">color: palette(text); font-size: 13px; font-weight: bold; margin-top: 10px;</string>
+             </property>
+             <property name="text">
+              <string>別ウィンドウで表示中</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignmentFlag::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </item>
        </layout>
       </widget>

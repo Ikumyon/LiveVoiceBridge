@@ -22,6 +22,7 @@ a = Analysis(
         'pyopenjtalk',
         'pykakasi',
         'emoji',
+        'livevoicebridge_native',
         'google',
         'google.protobuf',
         'google.protobuf.internal',

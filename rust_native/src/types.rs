@@ -29,6 +29,7 @@ impl GpuMetric {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
+    pub available_metrics: Vec<String>,
     pub cpu_percent: f32,
     pub ram_percent: f32,
     pub ram_used_gb: f32,
@@ -44,6 +45,7 @@ pub struct MetricsSnapshot {
 impl MetricsSnapshot {
     pub fn to_py_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
+        dict.set_item("available_metrics", &self.available_metrics)?;
         dict.set_item("cpu_percent", self.cpu_percent)?;
         dict.set_item("ram_percent", self.ram_percent)?;
         dict.set_item("ram_used_gb", self.ram_used_gb)?;

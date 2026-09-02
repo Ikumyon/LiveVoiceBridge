@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF, QTimer
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QLinearGradient, QFont, QPainterPath
 
 class PerformanceGraphWidget(QWidget):
@@ -38,21 +38,31 @@ class PerformanceGraphWidget(QWidget):
         self.title_label.setFont(font)
         self.title_label.setStyleSheet("color: #E0E0E0;")
         self.title_label.setMinimumWidth(0)
+        self.title_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
 
         self.value_label = QLabel(f"0.0 {self.unit}", self)
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         main_color_str = self.line_colors[0].name()
         self.value_label.setStyleSheet(f"color: {main_color_str}; font-weight: bold;")
         self.value_label.setMinimumWidth(0)
+        self.value_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
 
-        header_layout.addWidget(self.title_label)
-        header_layout.addStretch(1)
-        header_layout.addWidget(self.value_label)
+        # ラベル文字列の sizeHint をレイアウト幅へ反映させると、Elide 更新時に
+        # resizeEvent が再帰し得る。幅はストレッチで固定的に配分する。
+        header_layout.addWidget(self.title_label, 2)
+        header_layout.addWidget(self.value_label, 3)
         layout.addLayout(header_layout)
         layout.addStretch(1)
 
         self.raw_title = title
         self.raw_value_text = f"0.0 {self.unit}"
+        self._elide_update_pending = False
 
     def add_value(self, val: float | list[float], display_text: str = None, dynamic_max: float = None):
         """単一または複数の値を追加してグラフを更新"""
@@ -85,6 +95,17 @@ class PerformanceGraphWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._schedule_elided_labels_update()
+
+    def _schedule_elided_labels_update(self):
+        """レイアウト処理の完了後に一度だけ省略表示を更新する。"""
+        if self._elide_update_pending:
+            return
+        self._elide_update_pending = True
+        QTimer.singleShot(0, self._run_elided_labels_update)
+
+    def _run_elided_labels_update(self):
+        self._elide_update_pending = False
         self._update_elided_labels()
 
     def _update_elided_labels(self):
@@ -96,34 +117,22 @@ class PerformanceGraphWidget(QWidget):
         fm_t = QFontMetrics(title_font)
         fm_v = QFontMetrics(value_font)
 
-        available_width = max(self.width() - 22, 20)
-
-        req_title_w = fm_t.horizontalAdvance(self.raw_title)
-        req_val_w = fm_v.horizontalAdvance(self.raw_value_text)
-
-        if req_title_w + req_val_w <= available_width:
-            self.title_label.setText(self.raw_title)
-            self.value_label.setText(self.raw_value_text)
-            return
-
-        max_val_allowed = max(int(available_width * 0.75), 40)
-        allocated_val_w = min(req_val_w, max_val_allowed)
-        allocated_title_w = max(available_width - allocated_val_w, 20)
-
-        self.title_label.setText(
-            fm_t.elidedText(
-                self.raw_title,
-                Qt.TextElideMode.ElideRight,
-                allocated_title_w,
-            )
+        title_text = fm_t.elidedText(
+            self.raw_title,
+            Qt.TextElideMode.ElideRight,
+            max(self.title_label.width(), 20),
         )
-        self.value_label.setText(
-            fm_v.elidedText(
-                self.raw_value_text,
-                Qt.TextElideMode.ElideRight,
-                allocated_val_w,
-            )
+        value_text = fm_v.elidedText(
+            self.raw_value_text,
+            Qt.TextElideMode.ElideRight,
+            max(self.value_label.width(), 20),
         )
+
+        # 不要な setText はスタイル・レイアウトの再評価も発生させるため避ける。
+        if self.title_label.text() != title_text:
+            self.title_label.setText(title_text)
+        if self.value_label.text() != value_text:
+            self.value_label.setText(value_text)
 
     def paintEvent(self, event):
         super().paintEvent(event)

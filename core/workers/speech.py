@@ -11,8 +11,8 @@ from PySide6.QtCore import QThread, Signal
 
 from core.audio.playback import apply_audio_effects, play_wav
 from core.comment_processing import (
+    DictionaryMatcher,
     replace_emojis,
-    replace_words,
     split_speech_segments,
 )
 from core.tts.wav_cache import TtsWavCache
@@ -40,11 +40,22 @@ class SpeechWorker(QThread):
         self.tts_engine = tts_engine
         self.engine_type = engine_type.lower()
         self.engine_config = engine_config if engine_config is not None else {}
+        self._word_list = []
+        self._word_matcher = DictionaryMatcher()
         self.word_list = word_list if word_list is not None else []
         self.wav_cache = TtsWavCache()
         self._running = True
         max_workers = 1 if self.engine_type in {"supertonic", "supertonic_lightweight"} else 8
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    @property
+    def word_list(self) -> list[dict]:
+        return self._word_list
+
+    @word_list.setter
+    def word_list(self, value: list[dict]) -> None:
+        self._word_list = list(value or [])
+        self._word_matcher = DictionaryMatcher(self._word_list)
 
     def stop(self) -> None:
         self._running = False
@@ -95,9 +106,7 @@ class SpeechWorker(QThread):
 
     def _prepare_sentence(self, segment: dict) -> dict:
         prepared = dict(segment)
-        text = replace_emojis(
-            replace_words(str(segment.get("text", "")), self.word_list)
-        )
+        text = replace_emojis(self._word_matcher.replace(str(segment.get("text", ""))))
         prepared["text"] = text
         params = self._resolve_parameters(prepared)
         request = self._build_cache_request(text, params)
@@ -282,7 +291,7 @@ class SpeechWorker(QThread):
     ) -> str | None:
         try:
             self.log.emit(f"[SpeechWorker] 音声合成リクエスト送信: '{text}'")
-            text = replace_words(text, self.word_list)
+            text = self._word_matcher.replace(text)
             text = replace_emojis(text)
 
             # 各パラメータについて、セグメントからの個別指定がなければ engine_config から、それも無ければ合理的なデフォルト値を取得

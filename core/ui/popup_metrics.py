@@ -55,11 +55,18 @@ FIXED_METRIC_DESCRIPTORS = (
         "network", "ネットワーク通信速度", (QColor(255, 145, 0), QColor(0, 210, 255)), 1024.0, 2
     ),
     MetricDescriptor("youtube_connections", "YouTube 同時接続数", (QColor(255, 82, 82),), 4.0, 3),
+    MetricDescriptor("npu", "NPU 使用率", (QColor(179, 136, 255),), 100.0, 4),
 )
+
+APP_METRIC_IDS = {"youtube_connections"}
 
 
 def fixed_metric_catalog() -> list[dict[str, str]]:
-    return [{"id": item.metric_id, "title": item.title} for item in FIXED_METRIC_DESCRIPTORS]
+    return [
+        {"id": item.metric_id, "title": item.title}
+        for item in FIXED_METRIC_DESCRIPTORS
+        if item.metric_id in APP_METRIC_IDS
+    ]
 
 
 def clean_gpu_name(name: str, index: int) -> str:
@@ -68,13 +75,16 @@ def clean_gpu_name(name: str, index: int) -> str:
 
 
 def metric_catalog_from_data(data: dict) -> list[dict[str, str]]:
-    catalog = fixed_metric_catalog()
+    available = {str(metric_id) for metric_id in data.get("available_metrics", [])}
+    catalog = [
+        {"id": item.metric_id, "title": item.title}
+        for item in FIXED_METRIC_DESCRIPTORS
+        if item.metric_id in APP_METRIC_IDS or item.metric_id in available
+    ]
     for index, gpu_info in enumerate(data.get("gpus", [])):
         gpu_id = str(gpu_info.get("id", f"gpu_{index}"))
         title = clean_gpu_name(str(gpu_info.get("name", f"GPU {index}")), index)
         catalog.append({"id": f"gpu:{gpu_id}", "title": title})
-    if data.get("has_npu", False):
-        catalog.append({"id": "npu", "title": "NPU 使用率"})
     return catalog
 
 
@@ -321,10 +331,6 @@ class PopupMetricsPanel(QScrollArea):
                 (QColor(0, 230, 118), QColor(255, 64, 129)),
                 100.0,
                 100 + index,
-            )
-        if data.get("has_npu", False):
-            self.descriptors["npu"] = MetricDescriptor(
-                "npu", "NPU 使用率", (QColor(179, 136, 255),), 100.0, 200
             )
         self._sync_cards()
 

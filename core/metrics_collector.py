@@ -1,12 +1,12 @@
 import logging
 import time
 from PySide6.QtCore import QThread, Signal
-from livevoicebridge_metrics import RustMetricsCollector
+from livevoicebridge_native import RustMetricsCollector
 
 logger = logging.getLogger(__name__)
 
 class MetricsCollector:
-    """Rust ネイティブコア (livevoicebridge_metrics) を用いた高速メトリクス収集クラス"""
+    """共通Rustネイティブコアを用いた高速メトリクス収集クラス。"""
 
     def __init__(self):
         self._rust_collector = RustMetricsCollector()

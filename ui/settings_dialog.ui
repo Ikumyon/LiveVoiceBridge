@@ -425,11 +425,11 @@
           </item>
           <item row="7" column="0" colspan="3">
            <widget class="QTableWidget" name="popupMetricsTableWidget">
-            <property name="minimumSize">
-             <size>
-              <width>0</width>
-              <height>160</height>
-             </size>
+            <property name="verticalScrollBarPolicy">
+             <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+            </property>
+            <property name="horizontalScrollBarPolicy">
+             <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
             </property>
             <property name="columnCount">
              <number>2</number>

@@ -25,7 +25,8 @@ LiveVoiceBridge は、YouTube Live などの配信チャット（コメント）
 ## 技術スタック
 
 - **GUI フレームワーク**: PySide6 (Qt for Python)
-- **音声処理**: Python 標準 `wave`, `struct` ライブラリ（エフェクト自製）、`winsound` (Windows) / `aplay`・`pw-play`・`paplay` (Linux) / `afplay` (macOS)
+- **ネイティブコア**: Rust / PyO3（メトリクス収集、コメント解析、辞書最長一致、音声DSP、PCM/WAV変換）
+- **音声再生**: `winsound` (Windows) / `aplay`・`pw-play`・`paplay` (Linux) / `afplay` (macOS)
 - **データベース**: SQLite3 (キャッシュメタデータ管理)
 - **通信**: gRPC (YouTube 配信チャットのストリーミング取得)
 

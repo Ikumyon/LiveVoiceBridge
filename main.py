@@ -252,11 +252,14 @@ class LiveVoiceBridgeApp(QObject):
         self.start_button: QPushButton = self.window.findChild(QPushButton, "startButton")
         self.stop_button: QPushButton = self.window.findChild(QPushButton, "stopButton")
         self.clear_log_button: QPushButton = self.window.findChild(QPushButton, "clearLogButton")
+        self.test_comment_button: QPushButton = self.window.findChild(QPushButton, "testCommentButton")
         self.comment_list: QListWidget = self.window.findChild(QListWidget, "commentListWidget")
         self.log_text: QTextEdit = self.window.findChild(QTextEdit, "logTextEdit")
         self.status_label: QLabel = self.window.findChild(QLabel, "statusLabel")
         self.popout_button: QToolButton = self.window.findChild(QToolButton, "popoutButton")
         self.settings_button: QToolButton = self.window.findChild(QToolButton, "settingsButton")
+        self._comment_placeholder: QWidget = self.window.findChild(QWidget, "commentPopoutPlaceholder")
+        self._comment_placeholder_icon: QLabel = self.window.findChild(QLabel, "commentPopoutIconLabel")
 
     def _setup_comment_list(self) -> None:
         self.comment_list.setStyleSheet(COMMENT_LIST_STYLESHEET)
@@ -286,18 +289,7 @@ class LiveVoiceBridgeApp(QObject):
             print(f"辞書の初期化失敗: {exc}")
 
     def _setup_test_comment_button(self) -> None:
-        # テスト送信ボタンの動的生成
-        self.test_comment_button = QPushButton("テスト送信")
         self.test_comment_button.clicked.connect(self.send_test_comment)
-        self.test_comment_button.hide()
-
-        button_layout = self.window.findChild(QHBoxLayout, "buttonLayout")
-        if button_layout is not None:
-            clear_btn_idx = button_layout.indexOf(self.clear_log_button)
-            if clear_btn_idx != -1:
-                button_layout.insertWidget(clear_btn_idx + 1, self.test_comment_button)
-            else:
-                button_layout.addWidget(self.test_comment_button)
 
     def _setup_task_manager(self) -> None:
         """タスクマネージャータブのセットアップとタイマー開始"""
@@ -585,8 +577,6 @@ class LiveVoiceBridgeApp(QObject):
 
     def _enable_popout(self) -> None:
         """コメントをPiPウィンドウに移動する。"""
-        from PySide6.QtWidgets import QVBoxLayout
-
         # コメントタブのレイアウトを取得して保持
         comment_tab = self.window.findChild(QWidget, "commentTab")
         if comment_tab is None:
@@ -597,15 +587,6 @@ class LiveVoiceBridgeApp(QObject):
         if self._comment_tab_layout is not None:
             self._comment_tab_layout.removeWidget(self.comment_list)
             self.comment_list.setParent(None)
-
-        # プレースホルダーを表示 (tv.svg のグラフィック)
-        placeholder_widget = QWidget()
-        placeholder_layout = QVBoxLayout(placeholder_widget)
-        placeholder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        icon_label = QLabel()
-        icon_label.setFixedSize(64, 64)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         if TV_ICON_FILE.exists():
             try:
@@ -619,20 +600,10 @@ class LiveVoiceBridgeApp(QObject):
                 painter = QPainter(pixmap)
                 renderer.render(painter)
                 painter.end()
-                icon_label.setPixmap(pixmap)
+                self._comment_placeholder_icon.setPixmap(pixmap)
             except Exception:
                 pass
-
-        text_label = QLabel("別ウィンドウで表示中")
-        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        text_label.setStyleSheet("color: palette(text); font-size: 13px; font-weight: bold; margin-top: 10px;")
-
-        placeholder_layout.addWidget(icon_label)
-        placeholder_layout.addWidget(text_label)
-
-        self._comment_placeholder = placeholder_widget
-        if self._comment_tab_layout is not None:
-            self._comment_tab_layout.addWidget(self._comment_placeholder)
+        self._comment_placeholder.show()
 
         # PiPボタンのアイコンをオン（無印）状態に変更
         if PIP_ON_ICON_FILE.exists() and self.popout_button is not None:
@@ -678,10 +649,7 @@ class LiveVoiceBridgeApp(QObject):
 
         # プレースホルダーを削除して QListWidget をタブに戻す
         if self._comment_placeholder is not None:
-            if self._comment_tab_layout is not None:
-                self._comment_tab_layout.removeWidget(self._comment_placeholder)
-            self._comment_placeholder.deleteLater()
-            self._comment_placeholder = None
+            self._comment_placeholder.hide()
 
         if self._comment_tab_layout is not None:
             self._comment_tab_layout.addWidget(self.comment_list)

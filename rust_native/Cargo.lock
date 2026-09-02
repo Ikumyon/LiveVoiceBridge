@@ -142,7 +142,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "livevoicebridge_metrics"
+name = "livevoicebridge_native"
 version = "0.1.0"
 dependencies = [
  "nvml-wrapper",

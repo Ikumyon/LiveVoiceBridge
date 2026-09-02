@@ -1,14 +1,14 @@
 [package]
-name = "livevoicebridge_metrics"
+name = "livevoicebridge_native"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "livevoicebridge_metrics"
+name = "livevoicebridge_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py311"] }
 sysinfo = "0.30"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -16,6 +16,7 @@ serde_json = "1.0"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_System_Performance",
     "Win32_System_SystemInformation",
     "Win32_NetworkManagement_IpHelper",
@@ -23,4 +24,6 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
 ] }
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 nvml-wrapper = "0.10"

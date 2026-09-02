@@ -253,6 +253,12 @@ class SettingsDialog(QObject):
         self.popup_metrics_table.setColumnCount(2)
         self.popup_metrics_table.setHorizontalHeaderLabels(["項目", "表示"])
         self.popup_metrics_table.verticalHeader().setVisible(False)
+        self.popup_metrics_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.popup_metrics_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.popup_metrics_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
@@ -918,6 +924,21 @@ class SettingsDialog(QObject):
             )
             self._popup_metric_combos[metric_id] = combo
             self.popup_metrics_table.setCellWidget(row, 1, combo)
+
+        self._fit_popup_metrics_table_to_contents()
+
+    def _fit_popup_metrics_table_to_contents(self) -> None:
+        """内側をスクロールさせず、全メトリクス行が収まる高さにする。"""
+        self.popup_metrics_table.resizeRowsToContents()
+        rows_height = sum(
+            self.popup_metrics_table.rowHeight(row)
+            for row in range(self.popup_metrics_table.rowCount())
+        )
+        header_height = self.popup_metrics_table.horizontalHeader().height()
+        frame_height = self.popup_metrics_table.frameWidth() * 2
+        self.popup_metrics_table.setFixedHeight(
+            header_height + rows_height + frame_height
+        )
 
     def _on_popup_metric_mode_changed(self, metric_id: str, combo: QComboBox) -> None:
         self._popup_metric_display_modes[metric_id] = combo.currentData()

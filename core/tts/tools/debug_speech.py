@@ -5,7 +5,7 @@ import tempfile
 
 from core.tts.base import BaseTTSEngine
 from core.audio.playback import apply_audio_effects, play_wav
-from core.comment_processing import replace_emojis, replace_words
+from core.comment_processing import DictionaryMatcher, replace_emojis
 
 
 def speak_segments_offline(
@@ -15,12 +15,13 @@ def speak_segments_offline(
     speed: float,
     word_list: list[dict],
 ) -> None:
+    word_matcher = DictionaryMatcher(word_list)
     for seg in segments:
         text = seg.get("text", "")
         if not text:
             continue
 
-        text = replace_words(text, word_list)
+        text = word_matcher.replace(text)
         text = replace_emojis(text)
 
         target_speaker = seg.get("speaker_id") if seg.get("speaker_id") is not None else speaker_id
