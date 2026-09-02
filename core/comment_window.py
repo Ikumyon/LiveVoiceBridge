@@ -15,7 +15,7 @@ from core.ui.popup_metrics import POPUP_METRIC_PLACEMENTS, PopupMetricsPanel
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from main import LiveVoiceBridgeApp
+    from livevoicebridge.application.runtime import LiveVoiceBridgeApp
 
 
 class CommentWindow(QWidget):

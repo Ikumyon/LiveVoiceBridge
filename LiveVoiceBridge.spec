@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
     datas=[
         ('ui', 'ui'),
@@ -13,6 +13,9 @@ a = Analysis(
         ('core/stream_list_pb2_grpc.py', 'core'),
     ] + collect_data_files('pykakasi'),
     hiddenimports=[
+        'livevoicebridge',
+        'livevoicebridge.bootstrap',
+        'livevoicebridge.application.runtime',
         'sherpa_onnx',
         'supertonic',
         'onnxruntime',

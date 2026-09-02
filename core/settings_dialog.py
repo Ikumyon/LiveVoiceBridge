@@ -45,7 +45,7 @@ from core.comment_processing import normalize_read_blocks
 # 循環参照を防ぐためにTYPE_CHECKINGを使用
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from main import LiveVoiceBridgeApp
+    from livevoicebridge.application.runtime import LiveVoiceBridgeApp
     from core.tts.base import BaseTTSEngine
  
 import core.dictionary as dictionary
