@@ -157,7 +157,20 @@
        <attribute name="title">
         <string>タスクマネージャー</string>
        </attribute>
-       <layout class="QVBoxLayout" name="taskManagerTabLayout"/>
+       <layout class="QVBoxLayout" name="taskManagerTabLayout">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+       </layout>
       </widget>
      </widget>
     </item>

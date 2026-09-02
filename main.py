@@ -37,7 +37,8 @@ except ImportError:
     HAS_MULTIMEDIA = False
 
 import json
-from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl, QByteArray, QThread, QTimer
+import copy
+from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl, QByteArray, QThread, QTimer, Signal
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
@@ -94,6 +95,7 @@ import core.tts.factory as tts_factory
 import core.dictionary as dictionary
 from core.metrics_collector import MetricsCollector, MetricsWorker
 from core.ui.task_manager_widget import TaskManagerWidget
+from core.ui.popup_metrics import fixed_metric_catalog, metric_catalog_from_data
 
 
 
@@ -179,6 +181,8 @@ if platform.system() == "Windows":
 
 
 class LiveVoiceBridgeApp(QObject):
+    metric_catalog_changed = Signal(list)
+
     def __init__(self):
         super().__init__()
         self.window = self._load_main_window()
@@ -225,6 +229,9 @@ class LiveVoiceBridgeApp(QObject):
         self.comment_window: CommentWindow | None = None
         self._comment_tab_layout = None
         self._comment_placeholder: QLabel | None = None
+        self.latest_metrics: dict = {}
+        self.latest_youtube_connection_count = 0
+        self.metric_catalog = fixed_metric_catalog()
 
         # soundsディレクトリの自動生成
         self.sounds_dir = Path("sounds")
@@ -313,11 +320,18 @@ class LiveVoiceBridgeApp(QObject):
 
     def _on_metrics_collected(self, metrics_data: dict) -> None:
         """バックグラウンドスレッドからのメトリクス通知の受領"""
+        self.latest_metrics = metrics_data
+        catalog = metric_catalog_from_data(metrics_data)
+        if catalog != self.metric_catalog:
+            self.metric_catalog = catalog
+            self.metric_catalog_changed.emit(catalog)
         if hasattr(self, "task_manager_widget") and self.task_manager_widget is not None:
             try:
                 self.task_manager_widget.update_metrics(metrics_data)
             except Exception:
                 pass
+        if self.comment_window is not None:
+            self.comment_window.update_metrics(metrics_data)
 
     def _on_task_mgr_tick(self) -> None:
         """1秒間隔で軽量な接続・タスク情報を更新"""
@@ -360,6 +374,11 @@ class LiveVoiceBridgeApp(QObject):
                 tts_engine_name,
                 socket_count
             )
+            self.latest_youtube_connection_count = 1 if is_yt_connected else 0
+            if self.comment_window is not None:
+                self.comment_window.update_youtube_connections(
+                    self.latest_youtube_connection_count
+                )
         except Exception:
             pass
 
@@ -422,17 +441,17 @@ class LiveVoiceBridgeApp(QObject):
             if CONFIG_FILE.exists():
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
-                    self.config = DEFAULT_CONFIG.copy()
+                    self.config = copy.deepcopy(DEFAULT_CONFIG)
                     self.config.update(loaded)
 
                     # 各エンジン固有のマイグレーションを実行
                     tts_factory.migrate_all_configs(self.config, loaded)
             else:
-                self.config = DEFAULT_CONFIG.copy()
+                self.config = copy.deepcopy(DEFAULT_CONFIG)
                 self.save_config()
         except Exception as exc:
             print(f"設定ファイルのロード失敗: {exc}")
-            self.config = DEFAULT_CONFIG.copy()
+            self.config = copy.deepcopy(DEFAULT_CONFIG)
 
     def save_config(self) -> None:
         try:
@@ -625,7 +644,13 @@ class LiveVoiceBridgeApp(QObject):
         self.comment_window.opacity = self.config.get("comment_opacity", 0.8)
         self.comment_window.header_opacity = self.config.get("comment_header_opacity", 0.8)
         self.comment_window.border_opacity = self.config.get("comment_border_opacity", 0.8)
+        self.comment_window.apply_metrics_settings(self.config.get("popup_metrics", {}))
         self.comment_window.attach_list_widget(self.comment_list)
+        if self.latest_metrics:
+            self.comment_window.update_metrics(self.latest_metrics)
+        self.comment_window.update_youtube_connections(
+            self.latest_youtube_connection_count
+        )
 
         # 保存済みの位置・サイズがあれば復元
         x = self.config.get("comment_win_x")
@@ -690,7 +715,7 @@ class LiveVoiceBridgeApp(QObject):
 
     def open_settings_dialog(self) -> None:
         # ロールバック用に現在の設定をバックアップ
-        backup_config = self.config.copy()
+        backup_config = copy.deepcopy(self.config)
         backup_word_dict_data = self.load_raw_word_dict_data()
 
         dialog = SettingsDialog(self)
@@ -755,12 +780,14 @@ class LiveVoiceBridgeApp(QObject):
                     for_start=False,
                 )
 
+        self.config["popup_metrics"] = copy.deepcopy(settings["popup_metrics"])
         if self.comment_window is not None:
             self.comment_window.opacity = settings["comment_opacity"]
             self.comment_window.header_opacity = settings["comment_header_opacity"]
             self.comment_window.border_opacity = settings["comment_border_opacity"]
             self.config["comment_bg_color"] = settings["comment_bg_color"]
             self.config["comment_border_color"] = settings["comment_border_color"]
+            self.comment_window.apply_metrics_settings(settings["popup_metrics"])
             self.comment_window.update()
 
     def restore_settings_to_threads(self, backup_config: dict, backup_word_dict_data: dict) -> None:
@@ -786,6 +813,9 @@ class LiveVoiceBridgeApp(QObject):
             self.comment_window.border_opacity = backup_config.get("comment_border_opacity", 0.8)
             self.config["comment_bg_color"] = backup_config.get("comment_bg_color", "#1e1e1e")
             self.config["comment_border_color"] = backup_config.get("comment_border_color", "#3c3c3c")
+            self.comment_window.apply_metrics_settings(
+                backup_config.get("popup_metrics", {})
+            )
             self.comment_window.update()
 
     def ensure_tts_running(
@@ -1164,6 +1194,7 @@ class LiveVoiceBridgeApp(QObject):
         self.stop_all()
 
     def shutdown(self) -> None:
+        self.save_config()
         if hasattr(self, "metrics_worker") and self.metrics_worker is not None:
             try:
                 self.metrics_worker.stop()

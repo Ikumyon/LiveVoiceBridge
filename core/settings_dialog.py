@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QProgressDialog,
     QStackedWidget,
+    QHeaderView,
 )
 
 from core.app_config import SETTINGS_UI_FILE, EXE_DIR, EXTERNAL_LINK_ICON_FILE
@@ -53,6 +54,7 @@ from core.speakers.utils import SPEAKER_GROUP_ORDER, group_speakers_by_kana, spe
 
 from core.ui.delegates import HiraganaDelegate
 from core.ui.read_blocks import PlaceholderFrame, ReadBlockFrame
+from core.ui.popup_metrics import POPUP_METRIC_MODES, POPUP_METRIC_PLACEMENTS
 from core.tts.engines.supertonic import SupertonicEngine
 from core.tts.engines.supertonic_lightweight import SupertonicLightweightEngine
 
@@ -239,6 +241,28 @@ class SettingsDialog(QObject):
         self.border_opacity_spin: QSpinBox = self.dialog_window.findChild(QSpinBox, "borderOpacitySpinBox")
         self.bg_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "bgColorButton")
         self.border_color_button: QPushButton = self.dialog_window.findChild(QPushButton, "borderColorButton")
+        self.popup_metrics_placement_combo: QComboBox = self.dialog_window.findChild(
+            QComboBox, "popupMetricsPlacementComboBox"
+        )
+        self.popup_metrics_table: QTableWidget = self.dialog_window.findChild(
+            QTableWidget, "popupMetricsTableWidget"
+        )
+        self.popup_metrics_placement_combo.clear()
+        for placement, label in POPUP_METRIC_PLACEMENTS.items():
+            self.popup_metrics_placement_combo.addItem(label, placement)
+        self.popup_metrics_table.setColumnCount(2)
+        self.popup_metrics_table.setHorizontalHeaderLabels(["項目", "表示"])
+        self.popup_metrics_table.verticalHeader().setVisible(False)
+        self.popup_metrics_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        self.popup_metrics_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._popup_metric_display_modes: dict[str, str] = {}
+        self._popup_metric_combos: dict[str, QComboBox] = {}
+        if hasattr(self.main_app, "metric_catalog_changed"):
+            self.main_app.metric_catalog_changed.connect(self.refresh_popup_metric_catalog)
 
     def _setup_tts_engine_combo(self) -> None:
         # 音声エンジン選択のバインド
@@ -588,6 +612,19 @@ class SettingsDialog(QObject):
         self.update_color_button_style(self.bg_color_button, self.bg_color_hex)
         self.update_color_button_style(self.border_color_button, self.border_color_hex)
 
+        popup_metrics = self.main_app.config.get("popup_metrics", {})
+        placement_index = self.popup_metrics_placement_combo.findData(
+            popup_metrics.get("placement", "top")
+        )
+        self.popup_metrics_placement_combo.setCurrentIndex(
+            placement_index if placement_index >= 0 else 0
+        )
+        display_modes = popup_metrics.get("display_modes", {})
+        self._popup_metric_display_modes = (
+            dict(display_modes) if isinstance(display_modes, dict) else {}
+        )
+        self.refresh_popup_metric_catalog(getattr(self.main_app, "metric_catalog", []))
+
     def save_settings(self) -> None:
         self.main_app.config["youtube_api_key"] = self.api_key_line.text().strip()
 
@@ -672,6 +709,7 @@ class SettingsDialog(QObject):
         self.main_app.config["comment_border_opacity"] = self.border_opacity_slider.value() / 100.0
         self.main_app.config["comment_bg_color"] = self.bg_color_hex
         self.main_app.config["comment_border_color"] = self.border_color_hex
+        self.main_app.config["popup_metrics"] = self.get_popup_metrics_settings()
         
         # コンボボックスからキー名を取得して tts_engine に設定
         self.main_app.config["tts_engine"] = self._get_engine_key(self.tts_engine_combo.currentText())
@@ -759,6 +797,7 @@ class SettingsDialog(QObject):
             "comment_border_opacity": self.border_opacity_slider.value() / 100.0,
             "comment_bg_color": self.bg_color_hex,
             "comment_border_color": self.border_color_hex,
+            "popup_metrics": self.get_popup_metrics_settings(),
         }
 
     def connect_signals(self) -> None:
@@ -843,10 +882,65 @@ class SettingsDialog(QObject):
 
         self.bg_color_button.clicked.connect(self.select_bg_color)
         self.border_color_button.clicked.connect(self.select_border_color)
+        self.popup_metrics_placement_combo.currentIndexChanged.connect(
+            lambda _: self.settings_changed.emit()
+        )
         self.tts_engine_combo.currentTextChanged.connect(self.on_tts_engine_changed)
         self.add_author_block_button.clicked.connect(lambda: self.add_read_block("author"))
         self.add_message_block_button.clicked.connect(lambda: self.add_read_block("message"))
         self.add_text_block_button.clicked.connect(lambda: self.add_read_block("text", ""))
+
+    def refresh_popup_metric_catalog(self, catalog: list) -> None:
+        """検出済みメトリクスを設定表へ反映し、編集中の選択を保持する。"""
+        current_modes = self.get_popup_display_modes()
+        self._popup_metric_display_modes.update(current_modes)
+        self.popup_metrics_table.setRowCount(len(catalog))
+        self._popup_metric_combos.clear()
+
+        for row, entry in enumerate(catalog):
+            metric_id = str(entry.get("id", ""))
+            title = str(entry.get("title", metric_id))
+            item = QTableWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, metric_id)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.popup_metrics_table.setItem(row, 0, item)
+
+            combo = QComboBox(self.popup_metrics_table)
+            for mode, label in POPUP_METRIC_MODES.items():
+                combo.addItem(label, mode)
+            selected_mode = self._popup_metric_display_modes.get(metric_id, "hidden")
+            mode_index = combo.findData(selected_mode)
+            combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+            combo.currentIndexChanged.connect(
+                lambda _, key=metric_id, widget=combo: self._on_popup_metric_mode_changed(
+                    key, widget
+                )
+            )
+            self._popup_metric_combos[metric_id] = combo
+            self.popup_metrics_table.setCellWidget(row, 1, combo)
+
+    def _on_popup_metric_mode_changed(self, metric_id: str, combo: QComboBox) -> None:
+        self._popup_metric_display_modes[metric_id] = combo.currentData()
+        self.settings_changed.emit()
+
+    def get_popup_display_modes(self) -> dict[str, str]:
+        modes = dict(self._popup_metric_display_modes)
+        for metric_id, combo in self._popup_metric_combos.items():
+            mode = combo.currentData()
+            modes[metric_id] = mode if mode in POPUP_METRIC_MODES else "hidden"
+        return modes
+
+    def get_popup_metrics_settings(self) -> dict:
+        current = self.main_app.config.get("popup_metrics", {})
+        placement = self.popup_metrics_placement_combo.currentData()
+        if placement not in POPUP_METRIC_PLACEMENTS:
+            placement = "top"
+        return {
+            "placement": placement,
+            "vertical_ratio": float(current.get("vertical_ratio", 0.35)),
+            "horizontal_ratio": float(current.get("horizontal_ratio", 0.35)),
+            "display_modes": self.get_popup_display_modes(),
+        }
 
     def set_read_blocks(self, blocks: object) -> None:
         while self.read_block_layout.count():

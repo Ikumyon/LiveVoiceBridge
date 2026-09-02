@@ -1,8 +1,17 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPoint, QEvent
-from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel
+from PySide6.QtCore import Qt, QPoint, QEvent, QTimer
+from PySide6.QtWidgets import (
+    QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QPushButton,
+    QLabel,
+    QSplitter,
+)
 from PySide6.QtGui import QPainter, QColor
+
+from core.ui.popup_metrics import POPUP_METRIC_PLACEMENTS, PopupMetricsPanel
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -89,6 +98,23 @@ class CommentWindow(QWidget):
 
         self._main_layout.addWidget(self.header_bar)
 
+        self.content_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.metrics_panel = PopupMetricsPanel(self.content_splitter)
+        self.metrics_panel.set_background_opacity(self._opacity)
+        self.metrics_panel.visibility_changed.connect(self._refresh_metrics_visibility)
+        self.content_splitter.splitterMoved.connect(self._on_splitter_moved)
+        self._main_layout.addWidget(self.content_splitter, 1)
+
+        self._attached_list_widget: QWidget | None = None
+        self._applying_splitter_layout = False
+        self._metrics_settings = self.main_app.config.get("popup_metrics", {})
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(250)
+        self._splitter_save_timer.timeout.connect(self.main_app.save_config)
+        self.apply_metrics_settings(self._metrics_settings)
+
         self.setMouseTracking(True)
         self.header_bar.setMouseTracking(True)
         self.header_bar.installEventFilter(self)
@@ -105,7 +131,8 @@ class CommentWindow(QWidget):
 
     def attach_list_widget(self, list_widget: QWidget) -> None:
         """QListWidget をこのウィンドウのレイアウトに組み込む。"""
-        self._main_layout.addWidget(list_widget)
+        self._attached_list_widget = list_widget
+        self._configure_splitter()
         list_widget.setMouseTracking(True)
         list_widget.installEventFilter(self)
         self._filtered_list_widget = list_widget
@@ -123,8 +150,117 @@ class CommentWindow(QWidget):
             self._filtered_list_viewport = None
         self._filtered_list_widget = None
         list_widget.removeEventFilter(self)
-        self._main_layout.removeWidget(list_widget)
+        self._attached_list_widget = None
         list_widget.setParent(None)
+
+    def apply_metrics_settings(self, settings: dict | None = None) -> None:
+        """PiPメトリクスの表示モード・配置・分割比率を反映する。"""
+        source = settings if isinstance(settings, dict) else {}
+        placement = source.get("placement", "top")
+        if placement not in POPUP_METRIC_PLACEMENTS:
+            placement = "top"
+        display_modes = source.get("display_modes", {})
+        if not isinstance(display_modes, dict):
+            display_modes = {}
+        self._metrics_settings = {
+            "placement": placement,
+            "vertical_ratio": self._safe_ratio(source.get("vertical_ratio", 0.35)),
+            "horizontal_ratio": self._safe_ratio(source.get("horizontal_ratio", 0.35)),
+            "display_modes": dict(display_modes),
+        }
+        self.metrics_panel.set_display_modes(self._metrics_settings["display_modes"])
+        self._configure_splitter()
+
+    def update_metrics(self, data: dict) -> None:
+        self.metrics_panel.update_metrics(data)
+        self._refresh_metrics_visibility(self.metrics_panel.has_visible_metrics())
+
+    def update_youtube_connections(self, count: int) -> None:
+        self.metrics_panel.update_youtube_connections(count)
+
+    @staticmethod
+    def _safe_ratio(value: object) -> float:
+        try:
+            return max(0.1, min(float(value), 0.9))
+        except (TypeError, ValueError):
+            return 0.35
+
+    def _configure_splitter(self) -> None:
+        placement = self._metrics_settings.get("placement", "top")
+        orientation = (
+            Qt.Orientation.Vertical
+            if placement in {"top", "bottom"}
+            else Qt.Orientation.Horizontal
+        )
+
+        self._applying_splitter_layout = True
+        self.content_splitter.setOrientation(orientation)
+        widgets = [self.metrics_panel]
+        if self._attached_list_widget is not None:
+            widgets.append(self._attached_list_widget)
+        for widget in widgets:
+            widget.setParent(None)
+
+        metrics_first = placement in {"top", "left"}
+        if metrics_first:
+            self.content_splitter.addWidget(self.metrics_panel)
+            if self._attached_list_widget is not None:
+                self.content_splitter.addWidget(self._attached_list_widget)
+        else:
+            if self._attached_list_widget is not None:
+                self.content_splitter.addWidget(self._attached_list_widget)
+            self.content_splitter.addWidget(self.metrics_panel)
+
+        self._refresh_metrics_visibility(self.metrics_panel.has_visible_metrics())
+        self._applying_splitter_layout = False
+        QTimer.singleShot(0, self._apply_splitter_ratio)
+
+    def _refresh_metrics_visibility(self, visible: bool) -> None:
+        self.metrics_panel.setVisible(visible)
+        if self._attached_list_widget is not None:
+            self._attached_list_widget.setVisible(True)
+        if visible:
+            QTimer.singleShot(0, self._apply_splitter_ratio)
+
+    def _apply_splitter_ratio(self) -> None:
+        if self.metrics_panel.isHidden() or self._attached_list_widget is None:
+            return
+        placement = self._metrics_settings.get("placement", "top")
+        ratio_key = "vertical_ratio" if placement in {"top", "bottom"} else "horizontal_ratio"
+        ratio = self._safe_ratio(self._metrics_settings.get(ratio_key, 0.35))
+        total = (
+            self.content_splitter.height()
+            if self.content_splitter.orientation() == Qt.Orientation.Vertical
+            else self.content_splitter.width()
+        )
+        total = max(total - self.content_splitter.handleWidth(), 2)
+        metrics_size = max(1, round(total * ratio))
+        comments_size = max(1, total - metrics_size)
+        self._applying_splitter_layout = True
+        if self.content_splitter.indexOf(self.metrics_panel) == 0:
+            self.content_splitter.setSizes([metrics_size, comments_size])
+        else:
+            self.content_splitter.setSizes([comments_size, metrics_size])
+        self._applying_splitter_layout = False
+
+    def _on_splitter_moved(self, position: int, index: int) -> None:
+        if self._applying_splitter_layout or self.metrics_panel.isHidden():
+            return
+        sizes = self.content_splitter.sizes()
+        metrics_index = self.content_splitter.indexOf(self.metrics_panel)
+        if metrics_index < 0 or not sizes or sum(sizes) <= 0:
+            return
+        ratio = sizes[metrics_index] / sum(sizes)
+        ratio_key = (
+            "vertical_ratio"
+            if self.content_splitter.orientation() == Qt.Orientation.Vertical
+            else "horizontal_ratio"
+        )
+        ratio = self._safe_ratio(ratio)
+        self._metrics_settings[ratio_key] = ratio
+        popup_config = self.main_app.config.setdefault("popup_metrics", {})
+        popup_config[ratio_key] = ratio
+        self._splitter_save_timer.start()
 
     def close_popout(self) -> None:
         self.main_app.set_comment_popout(False)
@@ -136,6 +272,8 @@ class CommentWindow(QWidget):
     @opacity.setter
     def opacity(self, value: float) -> None:
         self._opacity = value
+        if hasattr(self, "metrics_panel"):
+            self.metrics_panel.set_background_opacity(value)
         self.update()
 
     @property

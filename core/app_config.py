@@ -49,6 +49,12 @@ DEFAULT_CONFIG = {
     "comment_border_opacity": 0.8,
     "comment_bg_color": "#1e1e1e",
     "comment_border_color": "#3c3c3c",
+    "popup_metrics": {
+        "placement": "top",
+        "vertical_ratio": 0.35,
+        "horizontal_ratio": 0.35,
+        "display_modes": {},
+    },
     "check_updates": True,
     "tts_engine": "voicevox",
     "voicevox": {

@@ -30,7 +30,7 @@ class PerformanceGraphWidget(QWidget):
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(4)
+        header_layout.setSpacing(6)
 
         self.title_label = QLabel(self.title, self)
         font = QFont()
@@ -38,18 +38,18 @@ class PerformanceGraphWidget(QWidget):
         self.title_label.setFont(font)
         self.title_label.setStyleSheet("color: #E0E0E0;")
         self.title_label.setMinimumWidth(0)
-        self.title_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         self.value_label = QLabel(f"0.0 {self.unit}", self)
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         main_color_str = self.line_colors[0].name()
         self.value_label.setStyleSheet(f"color: {main_color_str}; font-weight: bold;")
         self.value_label.setMinimumWidth(0)
-        self.value_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
-        header_layout.addWidget(self.title_label, 1)
-        header_layout.addWidget(self.value_label, 1)
+        header_layout.addWidget(self.title_label)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.value_label)
         layout.addLayout(header_layout)
+        layout.addStretch(1)
 
         self.raw_title = title
         self.raw_value_text = f"0.0 {self.unit}"
@@ -91,17 +91,39 @@ class PerformanceGraphWidget(QWidget):
         """カード幅に合わせてタイトルと値を ... (Elide) 省略更新"""
         from PySide6.QtGui import QFontMetrics
 
-        # タイトル省略
-        fm_t = QFontMetrics(self.title_label.font())
-        w_t = max(self.title_label.width(), 40)
-        elided_title = fm_t.elidedText(self.raw_title, Qt.TextElideMode.ElideRight, w_t)
-        self.title_label.setText(elided_title)
+        title_font = self.title_label.font()
+        value_font = self.value_label.font()
+        fm_t = QFontMetrics(title_font)
+        fm_v = QFontMetrics(value_font)
 
-        # 値省略
-        fm_v = QFontMetrics(self.value_label.font())
-        w_v = max(self.value_label.width(), 40)
-        elided_val = fm_v.elidedText(self.raw_value_text, Qt.TextElideMode.ElideRight, w_v)
-        self.value_label.setText(elided_val)
+        available_width = max(self.width() - 22, 20)
+
+        req_title_w = fm_t.horizontalAdvance(self.raw_title)
+        req_val_w = fm_v.horizontalAdvance(self.raw_value_text)
+
+        if req_title_w + req_val_w <= available_width:
+            self.title_label.setText(self.raw_title)
+            self.value_label.setText(self.raw_value_text)
+            return
+
+        max_val_allowed = max(int(available_width * 0.75), 40)
+        allocated_val_w = min(req_val_w, max_val_allowed)
+        allocated_title_w = max(available_width - allocated_val_w, 20)
+
+        self.title_label.setText(
+            fm_t.elidedText(
+                self.raw_title,
+                Qt.TextElideMode.ElideRight,
+                allocated_title_w,
+            )
+        )
+        self.value_label.setText(
+            fm_v.elidedText(
+                self.raw_value_text,
+                Qt.TextElideMode.ElideRight,
+                allocated_val_w,
+            )
+        )
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -172,4 +194,3 @@ class PerformanceGraphWidget(QWidget):
             pen = QPen(color, 2)
             painter.setPen(pen)
             painter.drawPath(path)
-

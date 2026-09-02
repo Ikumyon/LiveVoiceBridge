@@ -12,5 +12,4 @@ openvino
 numpy
 soundfile
 pyopenjtalk
-psutil
-pynvml
+maturin

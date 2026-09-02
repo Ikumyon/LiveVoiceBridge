@@ -41,3 +41,9 @@ config.json
 sounds/
 build/
 dist/
+
+# Rust Build Artifacts
+target/
+**/target/
+*.whl
+

@@ -13,7 +13,7 @@ class TaskManagerWidget(QWidget):
         super().__init__(parent)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(9, 9, 9, 9)
         main_layout.setSpacing(12)
 
         # スクロールエリア
@@ -35,7 +35,12 @@ class TaskManagerWidget(QWidget):
         # 常時存在する基本メトリクスグラフ
         self.cpu_graph = PerformanceGraphWidget("CPU 使用率", QColor(0, 210, 255), "%", 100.0)
         self.ram_graph = PerformanceGraphWidget("メモリ (RAM) 使用量", QColor(255, 215, 64), "%", 100.0)
-        self.net_graph = PerformanceGraphWidget("ネットワーク通信速度", QColor(255, 145, 0), "KB/s", 1024.0)
+        self.net_graph = PerformanceGraphWidget(
+            "ネットワーク通信速度", [QColor(255, 145, 0), QColor(0, 210, 255)], "KB/s", 1024.0
+        )
+        self.concurrent_connections_graph = PerformanceGraphWidget(
+            "YouTube 同時接続数", QColor(255, 82, 82), "件", 4.0
+        )
 
         # 動的デバイス用辞書 {id: PerformanceGraphWidget}
         self.gpu_core_graphs = {}
@@ -92,6 +97,7 @@ class TaskManagerWidget(QWidget):
         self.grid_layout.addWidget(self.cpu_graph, 0, 0)
         self.grid_layout.addWidget(self.ram_graph, 0, 1)
         self.grid_layout.addWidget(self.net_graph, 0, 2)
+        self.grid_layout.addWidget(self.concurrent_connections_graph, 1, 0)
 
     def update_metrics(self, data: dict):
         """収集されたメトリクスでグラフを更新（動的追加対応）"""
@@ -101,12 +107,15 @@ class TaskManagerWidget(QWidget):
         disp_ram = f"{data['ram_used_gb']:.2f} / {data['ram_total_gb']:.1f} GB ({data['ram_percent']:.1f}%)"
         self.ram_graph.add_value(data["ram_percent"], disp_ram)
 
-        net_speed = data["net_total_speed_kb"]
-        if net_speed >= 1024.0:
-            disp_net = f"↓↑ {net_speed / 1024.0:.2f} MB/s"
-        else:
-            disp_net = f"↓↑ {net_speed:.1f} KB/s"
-        self.net_graph.add_value(net_speed, disp_net, dynamic_max=max(net_speed * 1.5, 100.0))
+        net_send = float(data.get("net_send_speed_kb", 0.0))
+        net_recv = float(data.get("net_recv_speed_kb", 0.0))
+
+        def _fmt_speed(kb: float) -> str:
+            return f"{kb / 1024.0:.2f} MB/s" if kb >= 1024.0 else f"{kb:.1f} KB/s"
+
+        disp_net = f"↓ {_fmt_speed(net_recv)}  ↑ {_fmt_speed(net_send)}"
+        max_speed = max((net_send + net_recv) * 1.5, 100.0)
+        self.net_graph.add_value([net_recv, net_send], disp_net, dynamic_max=max_speed)
 
         # 2. GPU群の動的配置 & 更新 (Core + VRAM マルチライン統合)
         gpus = data.get("gpus", [])
@@ -125,11 +134,12 @@ class TaskManagerWidget(QWidget):
                     [QColor(0, 230, 118), QColor(255, 64, 129)],
                     "%",
                     100.0,
-                    self
+                    self.graph_group
                 )
                 self.gpu_core_graphs[gpu_id] = gpu_graph
-                col = idx % 3
-                row = 1 + idx // 3
+                graph_pos = 4 + idx
+                row = graph_pos // 3
+                col = graph_pos % 3
                 self.grid_layout.addWidget(gpu_graph, row, col)
 
             gpu_perc = gpu_info.get("gpu_percent", 0.0)
@@ -149,7 +159,7 @@ class TaskManagerWidget(QWidget):
         # 3. NPU の動的配置 & 更新（搭載時のみ表示）
         if data.get("has_npu", False):
             if self.npu_graph is None:
-                self.npu_graph = PerformanceGraphWidget("NPU 使用率", QColor(179, 136, 255), "%", 100.0, self)
+                self.npu_graph = PerformanceGraphWidget("NPU 使用率", QColor(179, 136, 255), "%", 100.0, self.graph_group)
                 # グリッドの末尾に追加
                 next_pos = self.grid_layout.count()
                 row = next_pos // 3
@@ -170,6 +180,11 @@ class TaskManagerWidget(QWidget):
         yt_status = "接続中" if is_yt_connected else "停止中"
         yt_count = 1 if is_yt_connected else 0
         self.yt_conn_label.setText(f"YouTube ストリーム: {yt_status} (同時接続数: {yt_count})")
+        self.concurrent_connections_graph.add_value(
+            yt_count,
+            f"{yt_count} 件",
+            dynamic_max=max(4.0, yt_count * 1.5),
+        )
 
         self.tts_conn_label.setText(f"TTS エンジン: {tts_engine_name} (アクティブ接続: {active_connections_count})")
         self.net_sockets_label.setText(f"プロセス内アクティブソケット: {socket_count} 個")
