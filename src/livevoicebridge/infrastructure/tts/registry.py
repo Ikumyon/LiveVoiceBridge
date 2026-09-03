@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
-import core.tts.factory as engine_factory
-from core.tts.base import BaseTTSEngine
-from core.tts.runtime import ensure_tts_running
+import livevoicebridge.infrastructure.tts.factory as engine_factory
 from livevoicebridge.application.models import EngineConfig, TtsEngineKind
+from livevoicebridge.infrastructure.tts.base import BaseTTSEngine
+from livevoicebridge.infrastructure.tts.runtime import ensure_tts_running
 
 
 def backend_config(config: EngineConfig) -> dict[str, object]:

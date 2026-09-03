@@ -4,93 +4,90 @@ from __future__ import annotations
 
 import os
 import platform
-import psutil
 import queue
 import sys
 from dataclasses import replace
 from pathlib import Path
 
+import psutil
+
 try:
-    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+
     HAS_MULTIMEDIA = True
 except ImportError:
     HAS_MULTIMEDIA = False
 
 import json
-from PySide6.QtCore import QFile, QObject, QSize, Qt, QUrl, QByteArray, QThread, QTimer, Signal
+
+from PySide6.QtCore import QByteArray, QFile, QObject, QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPushButton,
     QTextEdit,
     QToolButton,
-    QListWidget,
     QWidget,
-    QHBoxLayout,
-    QInputDialog,
 )
-from PySide6.QtGui import QIcon, QPainter, QPixmap, QPalette, QDesktopServices
-from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
-
-
-from core.app_config import (
-    APP_VERSION,
-    MAIN_UI_FILE,
-    ICON_FILE,
-    SETTINGS_ICON_FILE,
-    PIP_ICON_FILE,
-    PIP_OFF_ICON_FILE,
-    PIP_ON_ICON_FILE,
-    TV_ICON_FILE,
-    CONFIG_FILE,
-)
-from core.comment_processing import (
+import livevoicebridge.infrastructure.dictionary_repository as dictionary
+from livevoicebridge.application.comment_processing import (
     build_read_text,
     parse_comment_into_segments,
 )
-from core.time_utils import now_text
-from livevoicebridge.infrastructure.streaming.youtube import YouTubeChatStreamWorker
-from livevoicebridge.workers.speech import SpeechWorker
-from core.settings_dialog import SettingsDialog
-from core.comment_window import CommentWindow
-from core.tts.base import BaseTTSEngine
-from core.tts.tools.debug_speech import speak_segments_offline
-from core.ui.helpers import (
-    COMMENT_LIST_STYLESHEET,
-    clip_to_circle,
-    create_comment_item,
-    load_svg_icon,
-)
-import livevoicebridge.infrastructure.dictionary_repository as dictionary
-from core.metrics_collector import MetricsCollector, MetricsWorker
-from core.ui.task_manager_widget import TaskManagerWidget
-from core.ui.popup_metrics import fixed_metric_catalog, metric_catalog_from_data
 from livevoicebridge.application.models import (
     AppConfig,
     EngineConfig,
     PopupMetricsConfig,
-    PresentationConfig,
     ReadBlock,
     ReadBlockKind,
     RuntimeState,
-    SpeechConfig,
-    StreamingConfig,
     TtsEngineKind,
     TtsInitializationRequest,
 )
 from livevoicebridge.application.service import ApplicationService
 from livevoicebridge.infrastructure.config_repository import JsonConfigRepository
+from livevoicebridge.infrastructure.metrics import MetricsWorker
+from livevoicebridge.infrastructure.streaming.youtube import YouTubeChatStreamWorker
+from livevoicebridge.infrastructure.tts.base import BaseTTSEngine
+from livevoicebridge.infrastructure.tts.debug_speech import speak_segments_offline
 from livevoicebridge.infrastructure.tts.registry import (
     TtsEngineRegistry,
     backend_config,
     config_from_backend,
 )
+from livevoicebridge.paths import (
+    APP_VERSION,
+    CONFIG_FILE,
+    ICON_FILE,
+    MAIN_UI_FILE,
+    PIP_ICON_FILE,
+    PIP_OFF_ICON_FILE,
+    PIP_ON_ICON_FILE,
+    SETTINGS_ICON_FILE,
+    TV_ICON_FILE,
+)
+from livevoicebridge.presentation.comment_window import CommentWindow
+from livevoicebridge.presentation.helpers import (
+    COMMENT_LIST_STYLESHEET,
+    clip_to_circle,
+    create_comment_item,
+    load_svg_icon,
+)
+from livevoicebridge.presentation.popup_metrics import fixed_metric_catalog, metric_catalog_from_data
+from livevoicebridge.presentation.settings_dialog import SettingsDialog
+from livevoicebridge.presentation.task_manager_widget import TaskManagerWidget
+from livevoicebridge.presentation.time_utils import now_text
+from livevoicebridge.workers.speech import SpeechWorker
 
 
 def _read_blocks_payload(blocks: tuple[ReadBlock, ...]) -> list[dict[str, str]]:
@@ -107,7 +104,6 @@ def _popup_metrics_payload(config: PopupMetricsConfig) -> dict[str, object]:
         "horizontal_ratio": config.horizontal_ratio,
         "display_modes": dict(config.display_modes),
     }
-
 
 
 class TtsInitializationWorker(QThread):
@@ -147,9 +143,10 @@ class TtsInitializationWorker(QThread):
 # Windows環境における日本語パスの pyopenjtalk 文字化け/初期化エラー問題を回避するセットアップ
 if platform.system() == "Windows":
     try:
-        import site
         import shutil
+        import site
         import tempfile
+
         # pyopenjtalkのアセットがsite-packages内にあるか探す
         site_dirs = site.getsitepackages()
         dict_src = None
@@ -165,19 +162,17 @@ if platform.system() == "Windows":
             temp_dir = tempfile.gettempdir()
             dest_dict_dir = os.path.join(temp_dir, "open_jtalk_dic_utf_8-1.11")
             dest_voice_file = os.path.join(temp_dir, "mei_normal.htsvoice")
-            
+
             if not os.path.exists(dest_dict_dir):
                 shutil.copytree(dict_src, dest_dict_dir)
             if not os.path.exists(dest_voice_file):
                 shutil.copy2(voice_src, dest_voice_file)
-            
+
             # 環境変数に設定。これ以降 pyopenjtalk をインポートしたモジュールは、
             # 自動的にこの一時フォルダの辞書を参照するようになります。
             os.environ["OPEN_JTALK_DICT_DIR"] = dest_dict_dir
     except Exception as e:
         print(f"[警告] pyopenjtalkの日本語パス回避設定に失敗しました: {e}")
-
-
 
 
 class LiveVoiceBridgeApp(QObject):
@@ -261,7 +256,7 @@ class LiveVoiceBridgeApp(QObject):
         self.status_label: QLabel = self.window.findChild(QLabel, "statusLabel")
         self.popout_button: QToolButton = self.window.findChild(QToolButton, "popoutButton")
         self.settings_button: QToolButton = self.window.findChild(QToolButton, "settingsButton")
-        self._comment_placeholder: QWidget = self.window.findChild(QWidget, "commentPopoutPlaceholder")
+        self._comment_placeholder = self.window.findChild(QWidget, "commentPopoutPlaceholder")
         self._comment_placeholder_icon: QLabel = self.window.findChild(QLabel, "commentPopoutIconLabel")
 
     def _setup_comment_list(self) -> None:
@@ -348,12 +343,10 @@ class LiveVoiceBridgeApp(QObject):
         # 3. 同時接続数・通信状態更新
         try:
             is_yt_connected = (
-                hasattr(self, "chat_worker")
-                and self.chat_worker is not None
-                and self.chat_worker.isRunning()
+                hasattr(self, "chat_worker") and self.chat_worker is not None and self.chat_worker.isRunning()
             )
             tts_engine_name = self.config.speech.active_engine.value
-            
+
             socket_count = 0
             try:
                 proc = psutil.Process()
@@ -364,16 +357,11 @@ class LiveVoiceBridgeApp(QObject):
             active_tts_conn = 1 if (hasattr(self, "tts_engine") and self.tts_engine is not None) else 0
 
             self.task_manager_widget.update_connection_info(
-                is_yt_connected,
-                active_tts_conn,
-                tts_engine_name,
-                socket_count
+                is_yt_connected, active_tts_conn, tts_engine_name, socket_count
             )
             self.latest_youtube_connection_count = 1 if is_yt_connected else 0
             if self.comment_window is not None:
-                self.comment_window.update_youtube_connections(
-                    self.latest_youtube_connection_count
-                )
+                self.comment_window.update_youtube_connections(self.latest_youtube_connection_count)
         except Exception:
             pass
 
@@ -403,23 +391,23 @@ class LiveVoiceBridgeApp(QObject):
                 if not latest_version_str:
                     self.append_log("[情報] アップデートチェック：タグ名が空です。")
                     return
-                
+
                 latest_clean = latest_version_str.lstrip("v").strip()
                 current_clean = APP_VERSION.lstrip("v").strip()
-                
+
                 def parse_ver(v_str: str) -> tuple[int, ...]:
                     try:
                         return tuple(map(int, v_str.split(".")))
                     except ValueError:
                         return (0,)
-                
+
                 if parse_ver(latest_clean) > parse_ver(current_clean):
                     self.append_log(f"[情報] 新しいバージョン {latest_version_str} が利用可能です。")
                     reply_btn = QMessageBox.question(
                         self.window,
                         "アップデート確認",
                         f"新しいバージョン ({latest_version_str}) が利用可能です。\nダウンロードページを開きますか？",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     )
                     if reply_btn == QMessageBox.StandardButton.Yes:
                         QDesktopServices.openUrl(QUrl("https://github.com/Ikumyon/LiveVoiceBridge/releases"))
@@ -457,7 +445,7 @@ class LiveVoiceBridgeApp(QObject):
         if not avatar_label:
             reply.deleteLater()
             return
-            
+
         if reply.error() == QNetworkReply.NoError:
             data = reply.readAll()
             pixmap = QPixmap()
@@ -471,22 +459,22 @@ class LiveVoiceBridgeApp(QObject):
         is_skip = data.get("is_skip", False)
 
         _, avatar_label = create_comment_item(self.comment_list, data, now_text())
-        
+
         if profile_image_url:
             request = QNetworkRequest(QUrl(profile_image_url))
             reply = self.avatar_network_manager.get(request)
             reply.setProperty("avatar_label", avatar_label)
- 
+
         # SE再生コマンドの処理
         play_file = data.get("play_file")
         if play_file and not is_skip:
             self.play_sound_file(play_file)
- 
+
     def play_sound_file(self, filename: str) -> None:
         if not self.player:
-            self.append_log(f"[音声再生エラー] QMediaPlayerが初期化されていません。")
+            self.append_log("[音声再生エラー] QMediaPlayerが初期化されていません。")
             return
-        
+
         safe_name = os.path.basename(filename)
         sound_path = self.sounds_dir / safe_name
         if sound_path.exists():
@@ -495,44 +483,44 @@ class LiveVoiceBridgeApp(QObject):
             self.append_log(f"[音声再生] {safe_name} を再生します。")
         else:
             self.append_log(f"[音声再生警告] {safe_name} が sounds ディレクトリに見つかりません。")
- 
+
     def on_dict_add_requested(self, word: str, reading: str) -> None:
         try:
             words = dictionary.add_word_to_group("配信コメント", word, reading, pos="名詞", comment="コメント追加")
             self.append_log(f"[辞書登録完了] 「{word}」を「{reading}」として登録しました（配信コメントグループ）。")
-            
+
             # メイン設定画面のメモリ上にある辞書も更新
             if hasattr(self, "word_dict") and isinstance(self.word_dict, dict):
                 self.word_dict["配信コメント"] = words
- 
+
             # 全辞書データのロードと統合
             merged_list = dictionary.load_merged_word_list()
-                
+
             if self.speech_worker is not None and self.speech_worker.isRunning():
                 self.speech_worker.word_list = merged_list
-                
+
         except Exception as exc:
             self.append_log(f"[辞書登録エラー] 辞書の保存または反映に失敗しました: {exc}")
- 
+
     def on_dict_del_requested(self, word: str) -> None:
         try:
             new_words = dictionary.delete_word_from_group("配信コメント", word)
             if new_words is None:
                 self.append_log(f"[辞書削除警告] 「{word}」は配信コメントグループに見つかりませんでした。")
                 return
-                
+
             self.append_log(f"[辞書削除完了] 「{word}」を辞書から削除しました（配信コメントグループ）。")
-            
+
             # メイン設定画面のメモリ上にある辞書も更新
             if hasattr(self, "word_dict") and isinstance(self.word_dict, dict):
                 self.word_dict["配信コメント"] = new_words
- 
+
             # 全辞書データのロードと統合
             merged_list = dictionary.load_merged_word_list()
-                
+
             if self.speech_worker is not None and self.speech_worker.isRunning():
                 self.speech_worker.word_list = merged_list
-                
+
         except Exception as exc:
             self.append_log(f"[辞書削除エラー] 辞書の保存または反映に失敗しました: {exc}")
 
@@ -582,7 +570,7 @@ class LiveVoiceBridgeApp(QObject):
 
         if TV_ICON_FILE.exists():
             try:
-                with open(TV_ICON_FILE, "r", encoding="utf-8") as f:
+                with open(TV_ICON_FILE, encoding="utf-8") as f:
                     svg_content = f.read()
                 text_color = self.window.palette().color(QPalette.ColorRole.Text).name()
                 modified_svg = svg_content.replace("currentColor", text_color)
@@ -595,7 +583,8 @@ class LiveVoiceBridgeApp(QObject):
                 self._comment_placeholder_icon.setPixmap(pixmap)
             except Exception:
                 pass
-        self._comment_placeholder.show()
+        if self._comment_placeholder is not None:
+            self._comment_placeholder.show()
 
         # PiPボタンのアイコンをオン（無印）状態に変更
         if PIP_ON_ICON_FILE.exists() and self.popout_button is not None:
@@ -612,9 +601,7 @@ class LiveVoiceBridgeApp(QObject):
         self.comment_window.attach_list_widget(self.comment_list)
         if self.latest_metrics:
             self.comment_window.update_metrics(self.latest_metrics)
-        self.comment_window.update_youtube_connections(
-            self.latest_youtube_connection_count
-        )
+        self.comment_window.update_youtube_connections(self.latest_youtube_connection_count)
 
         # 保存済みの位置・サイズがあれば復元
         x = presentation.window_x
@@ -679,7 +666,7 @@ class LiveVoiceBridgeApp(QObject):
 
     def load_all_word_dict_data(self) -> dict[str, list[dict]]:
         return dictionary.load_all_word_dict_data()
- 
+
     def load_raw_word_dict_data(self) -> dict:
         return dictionary.load_all_word_dict_data()
 
@@ -695,7 +682,7 @@ class LiveVoiceBridgeApp(QObject):
         if result == QDialog.Rejected:
             # キャンセルされた場合は設定値をロールバック
             self.config = backup_config
-            
+
             # 辞書データのロールバック（ファイルの書き戻し）
             try:
                 dictionary.restore_word_dict_data(backup_word_dict_data)
@@ -730,11 +717,7 @@ class LiveVoiceBridgeApp(QObject):
             self.speech_worker.word_list = settings["word_list"]
             signature = TtsInitializationRequest(engine).signature
 
-            if (
-                self._tts_ready_signature == signature
-                and self.tts_engine is not None
-                and self.tts_engine.is_running()
-            ):
+            if self._tts_ready_signature == signature and self.tts_engine is not None and self.tts_engine.is_running():
                 self.speech_worker.reconfigure(
                     self.tts_engine,
                     engine_kind.value,
@@ -768,6 +751,8 @@ class LiveVoiceBridgeApp(QObject):
             )
 
         if self.speech_worker is not None and self.speech_worker.isRunning():
+            if self.tts_engine is None:
+                raise RuntimeError("稼働中の音声ワーカーに対応するTTSエンジンがありません。")
             self.speech_worker.reconfigure(
                 self.tts_engine,
                 engine.kind.value,
@@ -817,11 +802,7 @@ class LiveVoiceBridgeApp(QObject):
         if for_start:
             self._pending_start_request = request
 
-        if (
-            self.tts_engine is not None
-            and self._tts_ready_signature == signature
-            and self.tts_engine.is_running()
-        ):
+        if self.tts_engine is not None and self._tts_ready_signature == signature and self.tts_engine.is_running():
             callback = self._pending_tts_test_callback
             self._pending_tts_test_callback = None
             if callback is not None:
@@ -845,8 +826,7 @@ class LiveVoiceBridgeApp(QObject):
         self._tts_init_signature = signature
         worker.finished.connect(self._on_tts_initialization_finished)
         self.append_log(
-            f"[情報] {self.tts_registry.display_name(request.engine.kind)}"
-            "をバックグラウンドで準備しています。"
+            f"[情報] {self.tts_registry.display_name(request.engine.kind)}をバックグラウンドで準備しています。"
         )
         if for_start:
             self.set_status("音声合成エンジンを準備しています...")
@@ -876,10 +856,7 @@ class LiveVoiceBridgeApp(QObject):
             self.tts_engine = worker.engine
             if self.speech_worker is not None and self.speech_worker.isRunning():
                 active_request = self._desired_tts_request
-                if (
-                    active_request is not None
-                    and active_request.signature == signature
-                ):
+                if active_request is not None and active_request.signature == signature:
                     self.speech_worker.reconfigure(
                         worker.engine,
                         active_request.engine.kind.value,
@@ -909,8 +886,7 @@ class LiveVoiceBridgeApp(QObject):
             worker.engine.terminate()
         self._tts_ready_signature = None
         message = (
-            f"{self.tts_registry.display_name(TtsEngineKind(request_type))}"
-            "の初期化に失敗しました。"
+            f"{self.tts_registry.display_name(TtsEngineKind(request_type))}の初期化に失敗しました。"
             if (request_type := signature[0])
             else "音声合成エンジンの初期化に失敗しました。"
         )
@@ -933,14 +909,18 @@ class LiveVoiceBridgeApp(QObject):
 
     def start(self) -> None:
         url_or_id = self.url_line.text().strip()
-        is_debug = (url_or_id.lower() == "debug")
+        is_debug = url_or_id.lower() == "debug"
         api_key = self.config.streaming.youtube_api_key
 
         if not url_or_id:
             QMessageBox.warning(self.window, "入力不足", "YouTube URLまたはVideo IDを入力してください。")
             return
         if not is_debug and not api_key:
-            QMessageBox.warning(self.window, "設定不足", "YouTube Data API Keyが設定されていません。メニューの ツール->設定 から入力してください。")
+            QMessageBox.warning(
+                self.window,
+                "設定不足",
+                "YouTube Data API Keyが設定されていません。メニューの ツール->設定 から入力してください。",
+            )
             return
 
         def begin_start() -> None:
@@ -1082,15 +1062,10 @@ class LiveVoiceBridgeApp(QObject):
         )
         if not ok or not text.strip():
             return
-            
-        dummy_comment = {
-            "author": "テストユーザー",
-            "message": text.strip(),
-            "profile_image_url": "",
-            "is_skip": False
-        }
+
+        dummy_comment = {"author": "テストユーザー", "message": text.strip(), "profile_image_url": "", "is_skip": False}
         self.add_comment_item(dummy_comment)
-        
+
         # 読み上げ文章の組み立て
         read_text = build_read_text(
             _read_blocks_payload(self.config.speech.read_blocks),
@@ -1100,35 +1075,38 @@ class LiveVoiceBridgeApp(QObject):
         segments, play_files = parse_comment_into_segments(read_text)
         if not segments:
             return
-            
+
         if play_files:
             segments[0]["play_file"] = play_files[0]
-            
+
         # 稼働中であれば speech_queue に入れる
         if self.speech_worker is not None and self.speech_worker.isRunning():
             self.speech_queue.put(segments)
         else:
             # 停止中の場合は、必要ならエンジンを立ち上げて一時スレッドで喋らせる
             engine = self.config.speech.engine()
-            
+
             # メインスレッドで安全に接続確認/起動を行う
             self.ensure_tts_running(engine)
-            
+
             # 一時読み込みに必要なパラメータを取得
             speaker_id = engine.speaker_id
             speed = engine.speed
-            
+
             word_list = []
             try:
                 word_list = dictionary.load_merged_word_list()
             except Exception:
                 pass
-                
+
             from concurrent.futures import ThreadPoolExecutor
+
             executor = ThreadPoolExecutor(max_workers=1)
             executor.submit(self._speak_test_comment_offline, segments, speaker_id, speed, word_list)
 
-    def _speak_test_comment_offline(self, segments: list[dict], speaker_id: int, speed: float, word_list: list[dict]) -> None:
+    def _speak_test_comment_offline(
+        self, segments: list[dict], speaker_id: int, speed: float, word_list: list[dict]
+    ) -> None:
         if self.tts_engine is None:
             return
         speak_segments_offline(self.tts_engine, segments, speaker_id, speed, word_list)
@@ -1145,6 +1123,7 @@ def run_application() -> None:
     # Windowsのタスクバーでカスタムアイコンを正しく表示させるための設定
     if platform.system() == "Windows":
         import ctypes
+
         myappid = "Ikumyon.LiveVoiceBridge.App.1.0"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 

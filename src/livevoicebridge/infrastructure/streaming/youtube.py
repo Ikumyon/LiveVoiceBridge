@@ -8,14 +8,14 @@ import time
 import requests
 from PySide6.QtCore import QThread, Signal
 
-from core.comment_processing import (
+from livevoicebridge.application.comment_processing import (
     build_read_text,
     clean_comment,
     normalize_read_blocks,
     parse_comment_into_segments,
 )
-from core.streaming.youtube.grpc import GRPC_TARGET, ensure_grpc_files
-from core.streaming.youtube.url import extract_video_id
+from livevoicebridge.infrastructure.streaming.grpc import GRPC_TARGET, ensure_grpc_files
+from livevoicebridge.infrastructure.streaming.url import extract_video_id
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 

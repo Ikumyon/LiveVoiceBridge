@@ -11,16 +11,16 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, Signal
 
-from core.audio.playback import apply_audio_effects, play_wav
-from core.comment_processing import (
+from livevoicebridge.application.comment_processing import (
     DictionaryMatcher,
     replace_emojis,
     split_speech_segments,
 )
+from livevoicebridge.infrastructure.audio import apply_audio_effects, play_wav
 from livevoicebridge.infrastructure.wav_cache import TtsWavCache
 
 if TYPE_CHECKING:
-    from core.tts.base import BaseTTSEngine
+    from livevoicebridge.infrastructure.tts.base import BaseTTSEngine
 
 
 class SpeechWorker(QThread):

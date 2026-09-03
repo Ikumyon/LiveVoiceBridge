@@ -122,7 +122,7 @@ LiveVoiceBridge は、YouTube Live などの配信チャット（コメント）
 
 本アプリケーションのインストール手順、起動方法、および各機能（PiPコメント表示、エフェクト、辞書機能など）の具体的な操作マニュアルは、独立したドキュメントとしてまとめています。
 
-詳細は **[USAGE.md (使用方法・マニュアル)](USAGE.md)** または **[絶対パスリンク](file:///c:/localfile/開発/LiveVoiceBridge/USAGE.md)** を参照してください。
+詳細は **[USAGE.md（使用方法・マニュアル）](USAGE.md)** を参照してください。
 
 ---
 
@@ -130,14 +130,28 @@ LiveVoiceBridge は、YouTube Live などの配信チャット（コメント）
 
 アプリケーションの実行ディレクトリに自動生成される `config.json` で詳細な設定を行えます。
 
-主要な設定項目：
-- `youtube_api_key`: YouTube Live チャットの取得に必要な YouTube Data API v3 の API キー。（取得先: [Google Cloud Console](https://console.cloud.google.com/apis/library/youtube.googleapis.com)）
-- `youtube_url`: 接続対象の YouTube 配信の URL または Video ID（`debug` と入力するとダミーコメントの送信テストモードになります）。
-- `tts_engine`: 使用する TTS エンジン名（`voicevox` / `coeiroink` / `bouyomichan` / `supertonic_lightweight` / `supertonic`）。
-- `skip_history`: 起動時に、接続前の過去ログコメントの読み上げをスキップするかどうか（`true` 推奨）。
-- `read_super_chat`: スーパーチャット等の有料イベントメッセージを読み上げるかどうか。
-- `read_blocks`: 読み上げテキストのフォーマットブロック。デフォルトでは `[{"type": "message"}]`（本文のみ）。`{"type": "author"}`（投稿者名）や `{"type": "text", "value": "さん。"}`（固定文字）を組み合わせることで、「〇〇さん。こんにちは」のようなカスタム読み上げが可能です。
-- `comment_popout`: コメントウィンドウの PiP（独立表示）状態。
+設定はバージョン付きの階層構造です。主要セクションは次のとおりです。
+
+- `schema_version`: 設定スキーマのバージョン。
+- `streaming`: APIキー、接続先、履歴・有料イベントの読み上げ設定。
+- `speech`: 選択中のエンジン、全エンジンの設定、読み上げブロック。
+- `presentation`: コメント表示、PiP、配信メトリクス表示。
+- `dictionary`: 選択中の辞書グループ。
+- `application`: 更新確認や入力方式などのアプリ設定。
+
+旧フラット形式を検出した場合は、初回起動時に `config.legacy.json` を作成してから正式スキーマへ一度だけ移行します。不正な正式スキーマを既定値で黙って置き換えることはありません。
+
+---
+
+## コード構成
+
+- `src/livevoicebridge/application`: 型付きモデル、ユースケース、状態遷移、コメント処理。
+- `src/livevoicebridge/infrastructure`: 設定・辞書・配信・TTS・音声・メトリクスの外部接続実装。
+- `src/livevoicebridge/presentation`: Qt画面と表示コンポーネント。
+- `src/livevoicebridge/workers`: バックグラウンド処理。
+- `rust_native`: Pythonで実装する利点が薄いCPU処理とOS依存処理のみを担当するRust拡張。
+
+Pythonは画面だけに限定せず、ネットワーク連携、オーケストレーション、設定、TTS統合など実装容易性の利点がある領域にも使用しています。
 
 ---
 

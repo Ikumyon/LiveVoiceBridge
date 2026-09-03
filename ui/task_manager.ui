@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TaskManagerContent</class>
+ <widget class="QWidget" name="TaskManagerContent">
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="spacing"><number>12</number></property>
+   <property name="leftMargin"><number>9</number></property><property name="topMargin"><number>9</number></property><property name="rightMargin"><number>9</number></property><property name="bottomMargin"><number>9</number></property>
+   <item><widget class="QScrollArea" name="scrollArea"><property name="frameShape"><enum>QFrame::Shape::NoFrame</enum></property><property name="widgetResizable"><bool>true</bool></property><widget class="QWidget" name="scrollContent"><layout class="QVBoxLayout" name="contentLayout"><property name="spacing"><number>12</number></property><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property>
+    <item><widget class="QGroupBox" name="graphGroup"><property name="title"><string>システムパフォーマンス（リアルタイム推移）</string></property><layout class="QGridLayout" name="gridLayout"><property name="spacing"><number>10</number></property></layout></widget></item>
+    <item><widget class="QWidget" name="infoContainer" native="true"><layout class="QHBoxLayout" name="infoLayout"><property name="spacing"><number>10</number></property><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property>
+     <item><widget class="QGroupBox" name="taskGroup"><property name="title"><string>内部タスク &amp; キュー状態</string></property><layout class="QVBoxLayout" name="taskLayout"><item><widget class="QLabel" name="commentQueueLabel"><property name="text"><string>コメント受信処理キュー: 0 件</string></property></widget></item><item><widget class="QLabel" name="ttsQueueLabel"><property name="text"><string>TTS 音声生成キュー: 0 件</string></property></widget></item><item><widget class="QLabel" name="speakingLabel"><property name="text"><string>現在再生中: (なし)</string></property><property name="wordWrap"><bool>true</bool></property></widget></item><item><spacer name="taskSpacer"><property name="orientation"><enum>Qt::Orientation::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property></spacer></item></layout></widget></item>
+     <item><widget class="QGroupBox" name="connectionGroup"><property name="title"><string>接続数 &amp; ストリーム状態</string></property><layout class="QVBoxLayout" name="connectionLayout"><item><widget class="QLabel" name="youtubeConnectionLabel"><property name="text"><string>YouTube ストリーム: 停止中 (接続数: 0)</string></property></widget></item><item><widget class="QLabel" name="ttsConnectionLabel"><property name="text"><string>外部 TTS サーバー接続: 待機中</string></property></widget></item><item><widget class="QLabel" name="socketLabel"><property name="text"><string>プロセス内アクティブソケット: --</string></property></widget></item><item><spacer name="connectionSpacer"><property name="orientation"><enum>Qt::Orientation::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property></spacer></item></layout></widget></item>
+    </layout></widget></item>
+   </layout></widget></widget></item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -14,7 +14,7 @@ import wave
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from core.app_config import EXE_DIR
+from livevoicebridge.paths import EXE_DIR
 
 CACHE_NONE = "none"
 CACHE_TEMP = "temp"

@@ -8,9 +8,9 @@ a = Analysis(
     datas=[
         ('ui', 'ui'),
         ('assets', 'assets'),
-        ('core/stream_list.proto', 'core'),
-        ('core/stream_list_pb2.py', 'core'),
-        ('core/stream_list_pb2_grpc.py', 'core'),
+        ('src/livevoicebridge/infrastructure/streaming/stream_list.proto', 'livevoicebridge/infrastructure/streaming'),
+        ('src/livevoicebridge/infrastructure/streaming/stream_list_pb2.py', 'livevoicebridge/infrastructure/streaming'),
+        ('src/livevoicebridge/infrastructure/streaming/stream_list_pb2_grpc.py', 'livevoicebridge/infrastructure/streaming'),
     ] + collect_data_files('pykakasi'),
     hiddenimports=[
         'livevoicebridge',

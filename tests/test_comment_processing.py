@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.comment_processing import (
+from livevoicebridge.application.comment_processing import (
     DictionaryMatcher,
     build_read_text,
     clean_comment,
@@ -44,7 +44,7 @@ def test_comment_commands_track_panning_and_sound_file() -> None:
 
 
 def test_read_blocks_are_normalized_and_rendered_in_order() -> None:
-    blocks = [
+    blocks: list[object] = [
         {"type": "author"},
         {"type": "invalid"},
         "not-a-block",

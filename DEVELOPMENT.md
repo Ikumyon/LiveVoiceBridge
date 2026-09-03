@@ -27,7 +27,7 @@ Linuxでアプリ本体を実行する際の推論バックエンド依存関係
 ## Verification
 
 ```powershell
-python -m compileall -q main.py core src tests
+python -m compileall -q main.py src tests
 ruff check main.py src tests
 ruff format --check main.py src tests
 mypy main.py src/livevoicebridge tests
@@ -37,4 +37,4 @@ cargo clippy --manifest-path rust_native/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path rust_native/Cargo.toml
 ```
 
-段階0では既存コードをキャラクタリゼーション対象としているため、Pythonのlintと型検査は新しいテストから開始します。以降のリワークで移行済みモジュールを検査対象へ順次追加します。
+Pythonコードはすべて `src/livevoicebridge` に配置し、パッケージ全体をlintと型検査の対象にします。

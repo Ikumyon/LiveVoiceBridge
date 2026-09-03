@@ -3,8 +3,8 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from core.app_config import DEFAULT_WORD_LIST, DICT_DIR
 from livevoicebridge.application.models import DictionaryEntry
+from livevoicebridge.paths import DEFAULT_WORD_LIST, DICT_DIR
 
 
 def ensure_default_dictionary() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import queue
 
-from core.streaming.youtube.url import extract_video_id
+from livevoicebridge.infrastructure.streaming.url import extract_video_id
 from livevoicebridge.infrastructure.streaming.youtube import (
     MEMBER_MILESTONE_CHAT_EVENT,
     SUPER_CHAT_EVENT,
