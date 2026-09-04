@@ -1683,14 +1683,14 @@ class SettingsDialog(QObject):
         return merged
 
     def download_supertonic_lightweight_model(self) -> None:
-        from livevoicebridge.infrastructure.model_download import ModelDownloader
+        from livevoicebridge.infrastructure.downloads.lightweight import ModelDownloader
 
         self.downloader = ModelDownloader(self.dialog_window, self.engine_settings, self.settings_changed)
         self.downloader.start()
         self._refresh_lightweight_model_selection()
 
     def download_supertonic_model(self) -> None:
-        from livevoicebridge.infrastructure.supertonic_model_download import SupertonicModelDownloader
+        from livevoicebridge.infrastructure.downloads.supertonic import SupertonicModelDownloader
 
         self.supertonic_downloader = SupertonicModelDownloader(
             self.dialog_window,

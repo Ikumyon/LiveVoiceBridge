@@ -27,7 +27,6 @@ mypy_path = "src"
 module = [
     "livevoicebridge.presentation.*",
     "livevoicebridge.infrastructure.tts.engines.*",
-    "livevoicebridge.infrastructure.model_download",
-    "livevoicebridge.infrastructure.supertonic_model_download",
+    "livevoicebridge.infrastructure.downloads.*",
 ]
 ignore_errors = true

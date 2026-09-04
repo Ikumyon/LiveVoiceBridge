@@ -1,4 +1,5 @@
-Set-Location $PSScriptRoot
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
 py -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
