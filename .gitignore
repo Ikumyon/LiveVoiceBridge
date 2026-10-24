@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pdb
 .venv/
 venv/
 .pytest_cache/
@@ -18,8 +19,7 @@ cache/
 AGENTS.md
 models/
 # Generated gRPC / Protocol Buffers files
-src/livevoicebridge/infrastructure/streaming/stream_list_pb2.py
-src/livevoicebridge/infrastructure/streaming/stream_list_pb2_grpc.py
+# Generated protobuf sources are committed under integrations/youtube/generated.
 
 #dicts
 dict/
@@ -44,8 +44,11 @@ Thumbs.db
 config.json
 config.legacy.json
 sounds/
+data/
 build/
 dist/
+.test-runs/
+.codex-type-check-cache/
 
 # Rust Build Artifacts
 target/

@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-set -e
-cd "$(dirname "$0")/.."
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-maturin develop --release --manifest-path rust_native/Cargo.toml
-python main.py

@@ -1,0 +1,46 @@
+from typing import Protocol
+
+from livevoicebridge.core.dictionary.models import DictionarySnapshot
+from livevoicebridge.core.speech.models import (
+    AudioData,
+    DictionaryCommand,
+    EngineConfig,
+    Speaker,
+    SpeechControls,
+    SpeechPlan,
+)
+
+
+class EngineConnection(Protocol):
+    def ensure_ready(self) -> None: ...
+    def speakers(self) -> tuple[Speaker, ...]: ...
+    def close(self) -> None: ...
+
+
+class AudioSynthesizer(EngineConnection, Protocol):
+    def synthesize(self, text: str, controls: SpeechControls, config: EngineConfig, max_bytes: int) -> AudioData: ...
+
+
+class ExternalSpeechOutput(EngineConnection, Protocol):
+    def send(self, text: str, controls: SpeechControls, config: EngineConfig) -> None: ...
+
+
+class EngineFactory(Protocol):
+    def __call__(self, config: EngineConfig) -> AudioSynthesizer | ExternalSpeechOutput: ...
+
+
+class AudioOutput(Protocol):
+    def drain_errors(self) -> tuple[str, ...]: ...
+    def play(self, audio: AudioData, controls: SpeechControls) -> None: ...
+    def sound(self, filename: str, overlap: bool) -> None: ...
+    def close(self) -> None: ...
+
+
+class TextProcessor(Protocol):
+    def parse(self, text: str) -> SpeechPlan: ...
+    def prepare(self, text: str, dictionary: DictionarySnapshot) -> str: ...
+
+
+class SpeechDictionary(Protocol):
+    def snapshot(self) -> DictionarySnapshot: ...
+    def execute(self, command: DictionaryCommand) -> None: ...

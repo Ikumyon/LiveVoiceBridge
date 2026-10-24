@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lvb-qwen3-service"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "openvino-genai==2026.5.0.0.dev20261022",
+    "openvino==2026.5.0.dev20261022",
+    "openvino-tokenizers==2026.5.0.0.dev20261022",
+    "numpy",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+export = [
+    "optimum-intel[openvino] @ https://github.com/huggingface/optimum-intel/archive/c46fb912366bc9d25b8395621d885a457369228d.tar.gz",
+    "qwen-tts==0.1.1", "transformers==4.57.3", "torch==2.11.0", "torchaudio==2.11.0", "torchvision==0.26.0",
+]
+
+[project.scripts]
+lvb-qwen3 = "lvb_qwen3_service.server:main"
+lvb-qwen3-tokenizer = "lvb_qwen3_service.prepare_tokenizer:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
