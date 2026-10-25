@@ -1,85 +1,4 @@
-use std::collections::HashMap;
-
 use pyo3::prelude::*;
-
-#[derive(Default)]
-struct TrieNode {
-    children: HashMap<char, usize>,
-    replacement: Option<String>,
-}
-
-#[pyclass]
-pub struct DictionaryMatcher {
-    nodes: Vec<TrieNode>,
-}
-
-#[pymethods]
-impl DictionaryMatcher {
-    #[new]
-    pub fn new(py: Python<'_>, entries: Vec<(String, String)>) -> Self {
-        py.allow_threads(|| Self::build(entries))
-    }
-
-    pub fn replace(&self, py: Python<'_>, text: &str) -> String {
-        py.allow_threads(|| self.replace_text(text))
-    }
-}
-
-impl DictionaryMatcher {
-    fn build(entries: Vec<(String, String)>) -> Self {
-        let mut matcher = Self {
-            nodes: vec![TrieNode::default()],
-        };
-        for (word, reading) in entries {
-            if word.is_empty() {
-                continue;
-            }
-            let mut node_index = 0usize;
-            for character in word.chars() {
-                let next = if let Some(index) = matcher.nodes[node_index].children.get(&character) {
-                    *index
-                } else {
-                    let index = matcher.nodes.len();
-                    matcher.nodes.push(TrieNode::default());
-                    matcher.nodes[node_index].children.insert(character, index);
-                    index
-                };
-                node_index = next;
-            }
-            matcher.nodes[node_index].replacement = Some(reading);
-        }
-        matcher
-    }
-
-    fn replace_text(&self, text: &str) -> String {
-        let characters: Vec<char> = text.chars().collect();
-        let mut output = String::with_capacity(text.len());
-        let mut start = 0usize;
-        while start < characters.len() {
-            let mut node_index = 0usize;
-            let mut cursor = start;
-            let mut longest: Option<(usize, &str)> = None;
-            while cursor < characters.len() {
-                let Some(next) = self.nodes[node_index].children.get(&characters[cursor]) else {
-                    break;
-                };
-                node_index = *next;
-                cursor += 1;
-                if let Some(replacement) = self.nodes[node_index].replacement.as_deref() {
-                    longest = Some((cursor, replacement));
-                }
-            }
-            if let Some((end, replacement)) = longest {
-                output.push_str(replacement);
-                start = end;
-            } else {
-                output.push(characters[start]);
-                start += 1;
-            }
-        }
-        output
-    }
-}
 
 #[derive(Clone, Default)]
 struct States {
@@ -298,7 +217,7 @@ pub struct ParsedSegment {
 
 #[pyfunction]
 pub fn parse_comment(py: Python<'_>, message: &str) -> Vec<ParsedSegment> {
-    py.allow_threads(|| {
+    py.detach(|| {
         parse_segments(message)
             .into_iter()
             .map(|segment| ParsedSegment {
@@ -355,16 +274,6 @@ pub fn hiragana_to_katakana(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dictionary_uses_longest_single_pass_match() {
-        let matcher = DictionaryMatcher::build(vec![
-            ("東京".to_string(), "とうきょう".to_string()),
-            ("東京都".to_string(), "とうきょうと".to_string()),
-            ("とうきょうと".to_string(), "再置換しない".to_string()),
-        ]);
-        assert_eq!(matcher.replace_text("東京都へ"), "とうきょうとへ");
-    }
 
     #[test]
     fn parser_tracks_state_and_escapes() {

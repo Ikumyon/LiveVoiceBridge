@@ -1,8 +1,10 @@
 name: quality
 
 on:
-  push:
-  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 env:
   PYTHONUTF8: "1"
@@ -14,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-        python-version: ["3.11"]
+        python-version: ["3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,13 +34,15 @@ jobs:
         run: >
           python -c "import pathlib,subprocess,sys,tomllib;
           p=tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project'];
-          subprocess.check_call([sys.executable,'-m','pip','install',*p['dependencies'],*p['optional-dependencies']['dev']])"
+          subprocess.check_call([sys.executable,'-m','pip','install','--upgrade','--upgrade-strategy','eager',*p['dependencies'],*p['optional-dependencies']['dev']])"
       - name: Python lint and formatting
         run: |
-          ruff check src tests services/qwen3/src tools
-          ruff format --check src tests services/qwen3/src tools
+          ruff check src services/qwen3/src tools
+          ruff format --check src services/qwen3/src tools
       - name: Python type check
-        run: mypy src/livevoicebridge tests services/qwen3/src
+        run: mypy src/livevoicebridge services/qwen3/src tools
+      - name: Update Rust dependencies
+        run: cargo update --manifest-path native/Cargo.toml
       - name: Rust type check
         run: cargo check --locked --manifest-path native/Cargo.toml --all-targets
       - name: Rust formatting

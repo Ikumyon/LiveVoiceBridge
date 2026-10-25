@@ -2,7 +2,7 @@ import math
 from dataclasses import asdict, fields, is_dataclass
 from threading import RLock
 from types import UnionType
-from typing import get_args, get_origin, get_type_hints
+from typing import TypeAliasType, get_args, get_origin, get_type_hints
 
 from livevoicebridge.core.settings.models import SCHEMA_VERSION, AppConfig
 from livevoicebridge.core.settings.ports import ConfigRepository
@@ -29,8 +29,13 @@ def validate(config: AppConfig) -> None:
     if not config.speech.read_blocks or not 1 <= config.speech.queue_limit <= 10000:
         raise ValueError("読み上げブロックとキュー上限が不正です。")
     for engine in config.speech.engines:
-        if not engine.url or engine.max_length == 0 or engine.max_length < -1:
+        if engine.max_length == 0 or engine.max_length < -1:
             raise ValueError("接続先または最大文字数が不正です。")
+        if isinstance(engine, Qwen3Config):
+            if engine.device not in {"GPU", "CPU"}:
+                raise ValueError("Qwen3のデバイスはGPUまたはCPUを指定してください。")
+        elif not engine.url:
+            raise ValueError("接続先を指定してください。")
         for value in asdict(engine).values():
             if isinstance(value, float) and not math.isfinite(value):
                 raise ValueError("音声パラメータは有限値で指定してください。")
@@ -54,6 +59,8 @@ def validate(config: AppConfig) -> None:
 
 
 def _validate_type(value, expected, location: str) -> None:
+    while isinstance(expected, TypeAliasType):
+        expected = expected.__value__
     origin = get_origin(expected)
     if origin is UnionType:
         for alternative in get_args(expected):

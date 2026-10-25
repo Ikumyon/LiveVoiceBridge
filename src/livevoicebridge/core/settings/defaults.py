@@ -20,7 +20,7 @@ def default_config() -> AppConfig:
                 VoicevoxConfig(url="http://127.0.0.1:50021", speaker_id=1),
                 CoeiroinkConfig(url="http://127.0.0.1:50032", speaker_id=1),
                 BouyomiConfig(url="127.0.0.1:50001"),
-                Qwen3Config(url="http://127.0.0.1:50040"),
+                Qwen3Config(),
             ),
         ),
         presentation=PresentationConfig(),

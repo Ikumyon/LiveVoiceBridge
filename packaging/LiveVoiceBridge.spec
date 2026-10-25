@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 root = Path(SPECPATH).parent
 if sys.platform == "win32":
@@ -22,7 +22,11 @@ a = Analysis(
     [str(root / "src/livevoicebridge/__main__.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=collect_data_files("livevoicebridge") + collect_data_files("pykakasi"),
+    datas=copy_metadata("livevoicebridge") + collect_data_files("livevoicebridge") + collect_data_files("pykakasi") + [
+        (str(root / "services/qwen3/pyproject.toml"), "livevoicebridge/integrations/qwen/resources/service"),
+        (str(root / "services/qwen3/src/lvb_qwen3_service"),
+         "livevoicebridge/integrations/qwen/resources/service/src/lvb_qwen3_service"),
+    ],
     hiddenimports=collect_submodules("grpc") + collect_submodules("google.protobuf")
     + ["livevoicebridge._native", "livevoicebridge.integrations.youtube.generated.stream_list_pb2_grpc"],
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], noarchive=False, optimize=0,

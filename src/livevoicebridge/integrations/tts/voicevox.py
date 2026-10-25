@@ -6,7 +6,7 @@ from livevoicebridge.integrations.processes.owned import OwnedProcess
 
 
 class VoicevoxEngine:
-    def __init__(self, config: EngineConfig):
+    def __init__(self, config: VoicevoxConfig):
         self._url = config.url.rstrip("/")
         self._process = OwnedProcess(config.executable_path)
 

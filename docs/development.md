@@ -4,11 +4,11 @@
 
 ## 開発環境
 
-正式対象はWindows・Linux、Python 3.11以降、Rust stableです。
+正式対象はWindows・Linux、通常版CPython 3.14以降、Rust 1.95以降のstableです。
 通常利用者はビルド済み配布フォルダを使用します。以下は開発者向けの手順です。
 
 ```powershell
-py -m venv venv
+python -m venv venv
 ./venv/Scripts/Activate.ps1
 $env:PYTHONUTF8 = "1"
 python -m pip install -e ".[dev]"
@@ -17,7 +17,26 @@ python -m pip install -e ".[dev]"
 Linuxでは先にALSA開発用ライブラリを導入します。Ubuntu/Debianは `libasound2-dev pkg-config`、
 Fedoraは `alsa-lib-devel pkgconf-pkg-config` が必要です。`pw-play` は使用しません。
 
-Rustの公開APIを変更した後は、明示的にビルドする段階で `maturin develop --release` を実行します。
+正式な配布ビルドと公開はGitHub Actionsを基本とします。ローカルのbat・ps1は開発中の確認用です。
+依存導入・Rustビルド・配布作成・同梱内容の検査は `tools/build.py` に集約し、Actionsとローカルで同じ処理を使います。
+
+WindowsでRust拡張だけを更新する場合は、リポジトリ直下の `build_rust.bat` を実行します。
+`tools/build_rust.ps1` は共通ツールの `rust` コマンドを呼ぶ入口です。共通ツールが `venv` を準備し、
+MaturinとCargo依存を最新版へ更新してから、`maturin develop --release --locked` で
+`native/Cargo.toml` をビルドして `src/livevoicebridge/` へ拡張を配置します。
+Pythonアプリの配布ビルドは実行しません。
+
+`venv` がない場合はPATH上の `python` から作成します。Pythonを明示する場合は、次のように指定します。
+
+```powershell
+./build_rust.bat -Python "C:\Python314\python.exe"
+```
+
+既存の `venv` は再利用します。Python 3.14未満・free-threaded版・不完全な環境の場合は停止するため、
+利用者が削除または退避してから作り直してください。Python、Rust stable、Windows用のMSVCビルド環境は
+事前に導入してください。スクリプトによるOS設定・実行ポリシーの永続変更は行いません。
+
+LinuxでRust拡張を更新する場合も、`python tools/build.py rust` で同じ処理を使います。
 型チェックだけでは既存の `_native.pyd` / `_native.so` は更新されません。新旧APIの互換処理はありません。
 
 ## 責務と依存
@@ -25,22 +44,30 @@ Rustの公開APIを変更した後は、明示的にビルドする段階で `ma
 coreは機能の型・契約・処理を所有し、Qt・Rustの具象型をimportしません。
 desktopとintegrationsはcoreに依存し、互いをimportしません。hostで依存を組み立てます。
 OS固有の分岐とAPIはRustへ集約し、Qtの共通API、HTTP/gRPC、JSON保存はPythonで扱います。
-固定UIはDesignerの.uiに定義します。
+固定UIはDesignerの.uiに定義します。詳細は [現行設計](architecture.md) を参照してください。
+
+辞書はRust/PyO3のSQLiteリポジトリを正式実装とし、SQLiteはRust拡張に同梱します。
+DB本体、差分ドラフト、ジャーナルは配置先内の `data/` に保持します。SQLの一時領域はメモリに限定します。
+同じ辞書DBは1つのアプリプロセスが所有し、別プロセスによる編集中ドラフトの破棄を排他ロックで防ぎます。
+Pythonはグループ情報と画面用の最大2,048件のキャッシュだけを保持し、全単語のリストを作りません。
+照合用の不変ハンドルは発話開始時に取得し、教育・忘却や設定保存後の後続発話から新しい版を使用します。
+Rustの辞書回帰テストはインメモリDBと `native/fixtures/dictionary/` の読み取り専用データを使用します。
+テスト実行は別途明示的な指示がある場合に限ります。
 
 ## 実装時の静的検証
 
 ```powershell
-python -m mypy --cache-dir .codex-type-check-cache src/livevoicebridge tests services/qwen3/src
-python -m ruff check src tests services/qwen3/src tools
-python -m ruff format --check src tests services/qwen3/src tools
+python -m mypy --cache-dir .codex-type-check-cache src/livevoicebridge services/qwen3/src tools
+python -m ruff check src services/qwen3/src tools
+python -m ruff format --check src services/qwen3/src tools
 cargo check --locked --manifest-path native/Cargo.toml --all-targets
 cargo fmt --manifest-path native/Cargo.toml -- --check
 cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
 ```
 
-CIもWindows/Linuxの静的検証に統一しています。
-アプリ起動・配布ビルド・音声再生・テスト実行・負荷計測は、別途指示があるまで実行しません。
-回帰テストはtestsに用意し、明示的なテスト実行時の一時データは `.test-runs/pytest` に限定します。
+実装時のローカル検証は静的検査に限定します。Actionsでは、その成功後に両OSの配布ビルドと同梱内容の確認も行います。
+ローカルのアプリ起動・配布ビルド・音声再生・テスト実行・負荷計測は、別途指示があるまで実行しません。
+Pythonの `tests/` は現在ありません。Rust辞書の既存テストとfixtureは保持し、実行は明示的な指示がある場合に限ります。
 未実施の実機検証と計測値を、検証済みとして報告しません。
 
 protobuf変更時は `python tools/generate_protocol.py` が出す差分を確認し、apply_patchで適用します。
@@ -48,12 +75,26 @@ protobuf変更時は `python tools/generate_protocol.py` が出す差分を確�
 
 ## 配布定義
 
-明示的に配布ビルドを実施する段階で使用するコマンドです。
+正式配布はActionsで作成します。次は明示的にローカルでビルド確認をする場合のコマンドです。
 
 ```powershell
-python -m pip install -e ".[package]"
-pyinstaller --clean packaging/LiveVoiceBridge.spec
+./build_rust.bat
+./build_python.bat
 ```
+
+Rustを変更していなければ `build_python.bat` だけを実行します。
+本体・開発・配布用の依存は、特別な理由がない限り版を固定せず、ビルド時に間接依存も含めて最新版へ更新します。
+Rustも `cargo update` を先に実行します。`Cargo.lock` は解決結果の記録として保持し、その後の `--locked` は
+同じビルド工程内で解決結果が変わらないようにするために使用します。
+依存側の互換条件はパッケージマネージャーに任せ、更新でAPI変更があればコードを新方式へ修正します。
+`tools/build_python.ps1` は共通ツールの `python` コマンドを呼ぶ入口です。共通ツールが `venv` の作成と
+本体・配布用Python依存の導入を行い、配置済みのRust拡張を使って `packaging/LiveVoiceBridge.spec` をPyInstallerに渡します。
+同梱内容とバージョンもActionsと同じ処理で確認します。Rustのビルドや自動更新は行いません。
+拡張がない場合や読み込めない場合は、Rust用batの実行を案内して停止します。
+既存の `dist/LiveVoiceBridge/` はPyInstallerが確認なしで更新するため、配布先で生成した利用者データは
+ビルド出力先に保存しないでください。両方のbatは終了時に一時停止し、ps1を直接実行する場合は停止しません。
+
+Linuxでも `python tools/build.py python` で配布作成と検査を行います。Rust拡張は先に `rust` コマンドで配置してください。
 
 `dist/LiveVoiceBridge/` をフォルダ単位で配布します。EXEと `_internal/` にフォーム・アイコン・
 protobuf・Rust拡張を同梱し、単一EXEの外部一時展開は行いません。
@@ -61,4 +102,42 @@ DLL解析時のPATHはPythonとWindowsのディレクトリに限定し、開発
 
 設定・辞書・効果音は配置先内のdataへ保存します。ソース起動ではリポジトリ直下を配置先とします。
 AppData、OS一時フォルダ、レジストリを設定保存先には使用しません。
-Qwen3の推論環境とモデルは独立したサービスとして別途用意します。
+Qwen3用のJSONは `integrations/qwen/resources/` に置き、サービスのソース・`pyproject.toml` は配布時に同階層の `service/` へ同梱します。
+開発時のサービスソースは `services/qwen3/` を使用します。
+専用Python環境・OpenVINO依存・モデルは配布ビルド時には取得せず、アプリ内のQwen3セットアップが準備します。
+例外として、YouTube生成コードが要求するgRPC・protobufの最低バージョンと、Qwen専用環境の固定依存は維持します。
+Qwenの固定理由は `docs/qwen3.md` に記載しています。
+Rust依存更新後は、配布作成の前に `build_rust.bat` で拡張を更新してください。
+
+## 設定の互換性
+
+リリース済み設定は自動変換とバックアップで互換性を維持します。変換は `integrations/storage/migrations.py`、
+読み書き・バックアップ・原子的保存は `config.py` が担当します。内部コードの旧importや互換ラッパーは残しません。
+
+## バージョンとActionsでの配布
+
+正式バージョンの管理元はGitタグだけです。本体・Rust・Qwenの宣言は開発用の固定値 `0.0.0` とし、
+リリース時に手作業で番号を書き換えません。設定の `schema_version` は独立して管理します。
+
+PRとmain更新時は、Windows x64・Linux x64の静的検査と配布ビルドを行い、圧縮した配布物をActionsの成果物に保存します。
+このビルド確認ではアプリ起動・音声再生・テスト実行を行いません。
+Linux配布はUbuntu 22.04でビルドし、ALSAなどのOS側ライブラリは利用環境に必要です。
+
+正式公開は、公開するコミットへ次のようにタグを付けてpushします。
+
+```powershell
+git tag -a v0.99.3 -m "Release v0.99.3"
+git push origin v0.99.3
+```
+
+正式タグは先頭ゼロのない `vX.Y.Z` 形式です。Actionsはタグとコミットを照合し、
+`python tools/build.py ci` が `build/ci-source/` に生成したビルド用ソースだけにタグの番号を反映します。
+この `ci` コマンドは共通のRust・Pythonビルド工程を順に呼び、圧縮します。元のソースの変更や自動コミットは行いません。
+ビルド用ソースとvenvは毎回新規に用意します。手動で同じCIコマンドを再実行する場合は、新しい作業コピーを使用してください。
+本体は同梱パッケージメタデータから番号を取得するため、利用環境にGitは不要です。
+
+両OSのビルドと同梱内容・番号の確認が成功したら、その成果物を再ビルドせずGitHub Releaseに添付して自動公開します。
+ファイル名は `LiveVoiceBridge-Windows-x64.zip` と `LiveVoiceBridge-Linux-x64.tar.gz` で、番号を含めません。
+どちらも展開すると `LiveVoiceBridge/` フォルダになります。Qwenの専用実行環境・モデルは含めません。
+一部のビルドや添付が失敗した場合は公開しません。添付・公開に失敗した場合はActionsの失敗ジョブを再実行し、同じタグの下書きを再利用します。
+公開済みリリースは上書きせず、修正は新しい番号のタグで公開します。

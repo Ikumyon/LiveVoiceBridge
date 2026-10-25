@@ -10,11 +10,6 @@ class AudioBudget:
         self._held = 0
         self._cancelled = cancelled
 
-    @property
-    def held_bytes(self) -> int:
-        with self._condition:
-            return self._held
-
     def set_limit(self, limit: int) -> None:
         with self._condition:
             self._limit = limit

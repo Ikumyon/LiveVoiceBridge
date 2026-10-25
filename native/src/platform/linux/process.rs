@@ -6,12 +6,32 @@ pub struct Child {
     group: Option<i32>,
 }
 impl Child {
-    pub fn spawn(path: &std::path::Path) -> Result<Self, String> {
-        let child = Command::new(path)
-            .process_group(0)
+    pub fn spawn(
+        path: &std::path::Path,
+        args: &[String],
+        cwd: Option<&str>,
+        env: &std::collections::HashMap<String, String>,
+        log: Option<&str>,
+    ) -> Result<Self, String> {
+        let mut command = Command::new(path);
+        command.args(args).envs(env).process_group(0);
+        if let Some(directory) = cwd {
+            command.current_dir(directory);
+        }
+        if let Some(log) = log {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log)
+                .map_err(|e| e.to_string())?;
+            command
+                .stdout(file.try_clone().map_err(|e| e.to_string())?)
+                .stderr(file);
+        } else {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+        let child = command
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| e.to_string())?;
         let group = child.id() as i32;
@@ -21,19 +41,14 @@ impl Child {
         })
     }
     pub fn running(&mut self) -> Result<bool, String> {
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                self.child.id(),
-                &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        };
-        if result != 0 {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-        Ok(unsafe { info.si_pid() } == 0)
+        Ok(self.child.try_wait().map_err(|e| e.to_string())?.is_none())
+    }
+    pub fn exit_code(&mut self) -> Result<Option<i32>, String> {
+        Ok(self
+            .child
+            .try_wait()
+            .map_err(|e| e.to_string())?
+            .map(|s| s.code().unwrap_or(-1)))
     }
     pub fn close(&mut self) -> Result<(), String> {
         let Some(group) = self.group.take() else {

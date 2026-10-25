@@ -45,7 +45,7 @@ impl PlatformPaths {
         Ok(Self {
             root: root.to_string_lossy().into_owned(),
             config: data.join("config.json").to_string_lossy().into_owned(),
-            dictionary: data.join("dictionary.json").to_string_lossy().into_owned(),
+            dictionary: data.join("dictionary.db").to_string_lossy().into_owned(),
             sounds: sounds.to_string_lossy().into_owned(),
             executable_filter: crate::platform::EXECUTABLE_FILTER.into(),
         })
@@ -55,4 +55,19 @@ impl PlatformPaths {
 #[pyfunction]
 pub fn initialize_platform() -> PyResult<()> {
     crate::platform::initialize().map_err(PyIOError::new_err)
+}
+
+#[pyfunction]
+pub fn qwen_platform() -> PyResult<(String, String)> {
+    if !cfg!(target_arch = "x86_64") {
+        return Err(PyIOError::new_err("Qwenの自動導入はx86_64環境が対象です。"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(("windows".into(), "python/python.exe".into()))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Ok(("linux".into(), "python/bin/python3".into()))
+    }
 }

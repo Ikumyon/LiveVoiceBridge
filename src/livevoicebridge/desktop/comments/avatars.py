@@ -3,7 +3,7 @@ from collections import OrderedDict
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QSize, Signal
 from PySide6.QtGui import QImageReader, QPixmap
 
-from livevoicebridge.desktop.comments.rendering import clip_to_circle
+from livevoicebridge.desktop.rendering.avatars import clip_to_circle
 
 
 class AvatarCache(QObject):

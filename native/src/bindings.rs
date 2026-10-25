@@ -3,7 +3,7 @@ use crate::platform::SocketCounter;
 use crate::traits::MetricsProvider;
 use pyo3::prelude::*;
 
-#[pyclass(frozen, get_all)]
+#[pyclass(frozen, get_all, from_py_object)]
 #[derive(Clone)]
 pub struct Measurement {
     pub value: Option<f64>,
@@ -23,7 +23,7 @@ impl Measurement {
     }
 }
 
-#[pyclass(frozen, get_all)]
+#[pyclass(frozen, get_all, from_py_object)]
 #[derive(Clone)]
 pub struct NativeGpu {
     pub identifier: String,
@@ -64,7 +64,7 @@ impl RustMetricsCollector {
         }
     }
     fn collect(&mut self, py: Python<'_>) -> PyResult<NativeMetricsSnapshot> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let raw = self
                 .provider
                 .as_mut()
@@ -140,7 +140,7 @@ impl RustMetricsCollector {
     }
     fn close(&mut self, py: Python<'_>) {
         let provider = self.provider.take();
-        py.allow_threads(|| drop(provider));
+        py.detach(|| drop(provider));
         self.sockets = SocketCounter::new();
     }
 }

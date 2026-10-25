@@ -45,17 +45,19 @@ class SpeechPipeline:
         on_error: Callable[[str], None],
         limit: int = 100,
         audio_mib: int = 32,
+        ready: Callable[[Event], object] | None = None,
     ):
         self.session = session
         self.revision = revision
         self._config = config
         self._engine = engine
+        self._ready = ready
         self._processor = processor
         self._dictionary = dictionary
         self._audio = audio
         self._on_progress = on_progress
         self._on_error = on_error
-        self._input: Queue[SpeechPlan | None] = Queue(limit)
+        self._input: Queue[SpeechPlan] = Queue(limit)
         self._output: Queue[_Playback | SoundEffect | None] = Queue(limit)
         self._cancelled = Event()
         self._finished = Event()
@@ -75,6 +77,10 @@ class SpeechPipeline:
     def set_revision(self, revision: int) -> None:
         self.revision = revision
 
+    @property
+    def accepting(self) -> bool:
+        return self._accepting
+
     def set_audio_limit(self, mib: int) -> None:
         self._budget.set_limit(mib * 1024 * 1024)
 
@@ -90,17 +96,6 @@ class SpeechPipeline:
                 return False
         self._notify()
         return True
-
-    def finish(self) -> None:
-        """Drain accepted requests. Intended for offline jobs and tests."""
-        with self._admission:
-            self._accepting = False
-        while not self._finished.is_set():
-            try:
-                self._input.put(None, timeout=0.05)
-                return
-            except Full:
-                continue
 
     def cancel(self) -> None:
         with self._admission:
@@ -162,13 +157,19 @@ class SpeechPipeline:
     def _generate(self) -> None:
         audio: AudioData | None = None
         try:
+            if self._ready is not None:
+                try:
+                    self._ready(self._cancelled)
+                except Exception as exc:
+                    if not self._cancelled.is_set():
+                        self._on_error(str(exc))
+                    self.cancel()
+                    return
             while not self._cancelled.is_set():
                 try:
                     plan = self._input.get(timeout=0.05)
                 except Empty:
                     continue
-                if plan is None:
-                    break
                 for item in plan.items:
                     if self._cancelled.is_set():
                         break

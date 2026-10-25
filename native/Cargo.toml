@@ -1,7 +1,9 @@
 [package]
 name = "livevoicebridge_native"
-version = "0.1.0"
+# Development placeholder; release builds derive the version from the Git tag.
+version = "0.0.0"
 edition = "2021"
+rust-version = "1.95"
 
 [lib]
 name = "_native"
@@ -11,12 +13,18 @@ crate-type = ["cdylib", "rlib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["abi3-py311"] }
-sysinfo = "0.30"
-rodio = { version = "=0.23.0", default-features = false, features = ["playback", "wav", "mp3", "flac", "vorbis"] }
+pyo3 = { version = "*", features = ["abi3-py314"] }
+sysinfo = "*"
+rodio = { version = "*", default-features = false, features = ["playback", "wav", "mp3", "flac", "vorbis"] }
+rusqlite = { version = "*", features = ["bundled", "fallible_uint"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+csv = "*"
+encoding_rs = "*"
+encoding_rs_io = "*"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "*", features = [
     "Win32_Foundation",
     "Win32_System_Performance",
     "Win32_NetworkManagement_IpHelper",
@@ -30,5 +38,5 @@ windows = { version = "0.58", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nvml-wrapper = "0.10"
-libc = "0.2"
+nvml-wrapper = "*"
+libc = "*"

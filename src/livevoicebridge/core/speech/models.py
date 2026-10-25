@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, fields, replace
 from enum import StrEnum
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 
 class TtsEngineKind(StrEnum):
@@ -63,12 +63,16 @@ class BouyomiConfig(EngineConnection):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Qwen3Config(EngineConnection):
+class Qwen3Config:
     kind: TtsEngineKind = TtsEngineKind.QWEN3
+    model_path: str = ""
+    device: str = "GPU"
+    speaker_id: int = 0
+    max_length: int = 50
     volume: float = 1.0
 
 
-EngineConfig: TypeAlias = VoicevoxConfig | CoeiroinkConfig | BouyomiConfig | Qwen3Config
+type EngineConfig = VoicevoxConfig | CoeiroinkConfig | BouyomiConfig | Qwen3Config
 
 
 def update_engine(config: EngineConfig, values: dict) -> EngineConfig:
@@ -142,7 +146,7 @@ class SoundEffect:
     overlap: bool = True
 
 
-SpeechItem: TypeAlias = Utterance | DictionaryCommand | SoundEffect
+type SpeechItem = Utterance | DictionaryCommand | SoundEffect
 
 
 @dataclass(frozen=True, slots=True)

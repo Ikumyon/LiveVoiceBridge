@@ -1,16 +1,19 @@
 [build-system]
-requires = ["setuptools>=68"]
+# Torch 2.11 requires setuptools below 82.
+requires = ["setuptools<82"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lvb-qwen3-service"
-version = "0.1.0"
-requires-python = ">=3.11"
+# Development placeholder; release builds derive the version from the Git tag.
+version = "0.0.0"
+requires-python = ">=3.14"
 dependencies = [
     "openvino-genai==2026.5.0.0.dev20261022",
     "openvino==2026.5.0.dev20261022",
     "openvino-tokenizers==2026.5.0.0.dev20261022",
-    "numpy",
+    # NNCF 3.4 requires numpy below 2.5.
+    "numpy<2.5",
     "soundfile",
 ]
 

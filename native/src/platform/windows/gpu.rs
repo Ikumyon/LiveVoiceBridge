@@ -5,7 +5,7 @@ use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
 use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
     PdhOpenQueryW, PDH_CSTATUS_NEW_DATA, PDH_CSTATUS_VALID_DATA, PDH_FMT_COUNTERVALUE_ITEM_W,
-    PDH_FMT_DOUBLE, PDH_MORE_DATA,
+    PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
 };
 
 use crate::types::GpuMetric;
@@ -13,24 +13,30 @@ use crate::types::GpuMetric;
 type AdapterId = (u32, u32);
 
 struct GpuQuery {
-    handle: isize,
-    engines: isize,
-    memory: isize,
+    handle: PDH_HQUERY,
+    engines: PDH_HCOUNTER,
+    memory: PDH_HCOUNTER,
     engine_buffer: Vec<u64>,
     memory_buffer: Vec<u64>,
 }
 
+// SAFETY: PDH handles are not thread-affine. This owner closes them only on drop,
+// and WindowsGpuMetrics accesses the query and its buffers through exclusive &mut self.
+unsafe impl Send for GpuQuery {}
+// SAFETY: Shared references expose no operations that read or modify the PDH query.
+unsafe impl Sync for GpuQuery {}
+
 impl GpuQuery {
     fn new() -> Option<Self> {
         unsafe {
-            let mut handle = 0;
+            let mut handle = PDH_HQUERY::default();
             if PdhOpenQueryW(PCWSTR::null(), 0, &mut handle) != 0 {
                 return None;
             }
             let mut query = Self {
                 handle,
-                engines: 0,
-                memory: 0,
+                engines: PDH_HCOUNTER::default(),
+                memory: PDH_HCOUNTER::default(),
                 engine_buffer: Vec::new(),
                 memory_buffer: Vec::new(),
             };
@@ -41,7 +47,7 @@ impl GpuQuery {
                 &mut query.engines,
             ) != 0
             {
-                query.engines = 0;
+                query.engines = PDH_HCOUNTER::default();
             }
             if PdhAddEnglishCounterW(
                 handle,
@@ -50,7 +56,7 @@ impl GpuQuery {
                 &mut query.memory,
             ) != 0
             {
-                query.memory = 0;
+                query.memory = PDH_HCOUNTER::default();
             }
             // Rate counters need two samples. Prime once and retain the query.
             PdhCollectQueryData(handle);
@@ -58,8 +64,8 @@ impl GpuQuery {
         }
     }
 
-    fn values(counter: isize, buffer: &mut Vec<u64>) -> Vec<(String, f64)> {
-        if counter == 0 {
+    fn values(counter: PDH_HCOUNTER, buffer: &mut Vec<u64>) -> Vec<(String, f64)> {
+        if counter.is_invalid() {
             return Vec::new();
         }
         unsafe {
@@ -200,7 +206,11 @@ impl WindowsGpuMetrics {
             .last_devices
             .is_none_or(|time| time.elapsed() >= Duration::from_secs(10))
         {
-            if self.query.as_ref().is_some_and(|query| query.engines == 0) {
+            if self
+                .query
+                .as_ref()
+                .is_some_and(|query| query.engines.is_invalid())
+            {
                 self.query = GpuQuery::new();
             }
             self.devices = Self::enumerate();

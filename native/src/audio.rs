@@ -200,7 +200,7 @@ fn process_effects(
     Ok(output)
 }
 
-#[pyclass(frozen)]
+#[pyclass(frozen, from_py_object)]
 #[derive(Clone)]
 pub struct AudioClip {
     pub(crate) samples: Arc<Vec<i16>>,
@@ -219,7 +219,7 @@ impl AudioClip {
         yamabiko: Option<i32>,
         panning: Option<String>,
     ) -> PyResult<Self> {
-        py.allow_threads(|| {
+        py.detach(|| {
             if max_bytes == 0 || wav.len() > max_bytes.saturating_add(65536) {
                 return Err("音声データが容量上限を超えました。".to_string());
             }

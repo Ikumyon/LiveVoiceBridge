@@ -13,7 +13,7 @@ import math
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 VOICES = ("ono_anna", "vivian", "serena", "uncle_fu", "dylan", "eric", "ryan", "aiden", "sohee")
@@ -22,7 +22,7 @@ MAX_TEXT_LENGTH = 2000
 
 
 class Synthesizer:
-    def __init__(self, model: Path, device: str):
+    def __init__(self, model: Path, device: str, cache: Path):
         import openvino as ov
         import openvino_genai
 
@@ -36,7 +36,7 @@ class Synthesizer:
             raise ValueError(f"指定デバイス {device} がありません: {devices}")
         self.device = device
         self.lock = Lock()
-        self.pipeline = openvino_genai.Text2SpeechPipeline(str(model), device, CACHE_DIR=str(model / "compiled_cache"))
+        self.pipeline = openvino_genai.Text2SpeechPipeline(str(model), device, CACHE_DIR=str(cache))
 
     def synthesize(self, text: str, voice_id: int, volume: float) -> bytes:
         import numpy as np
@@ -56,8 +56,36 @@ class Synthesizer:
         return buffer.getvalue()
 
 
-def handler_for(synth: Synthesizer) -> type[BaseHTTPRequestHandler]:
+class Runtime:
+    def __init__(self, model: Path, device: str, cache: Path, token: str):
+        self.device = device
+        self.token = token
+        self.phase = "loading"
+        self.error = ""
+        self.synth: Synthesizer | None = None
+        self._model = model
+        self._cache = cache
+
+    def load(self) -> None:
+        try:
+            synth = Synthesizer(self._model, self.device, self._cache)
+            self.phase = "warming"
+            synth.synthesize("こんにちは。", 0, 1.0)
+            self.synth = synth
+            self.phase = "ready"
+            logging.info("Model ready on %s", self.device)
+        except Exception as exc:
+            logging.exception("Model preparation failed")
+            self.error = str(exc)
+            self.phase = "error"
+
+
+def handler_for(runtime: Runtime) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
+        def log_request(self, code="-", size="-") -> None:
+            if self.path != "/health":
+                super().log_request(code, size)
+
         def send_body(self, status: int, content: bytes, content_type: str = "application/json") -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -65,16 +93,27 @@ def handler_for(synth: Synthesizer) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             try:
                 self.wfile.write(content)
-            except (BrokenPipeError, ConnectionResetError):
+            except BrokenPipeError, ConnectionResetError:
                 logging.info("Client disconnected")
 
         def send_json(self, status: int, value: object) -> None:
             self.send_body(status, json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
         def do_GET(self) -> None:
+            if self.headers.get("Authorization") != f"Bearer {runtime.token}":
+                self.send_json(403, {"error": "Forbidden"})
+                return
             if self.path == "/health":
                 self.send_json(
-                    200, {"service": "livevoicebridge-qwen3", "ready": True, "model": MODEL_ID, "device": synth.device}
+                    200,
+                    {
+                        "service": "livevoicebridge-qwen3",
+                        "ready": runtime.phase == "ready",
+                        "phase": runtime.phase,
+                        "error": runtime.error,
+                        "model": MODEL_ID,
+                        "device": runtime.device,
+                    },
                 )
             elif self.path == "/voices":
                 self.send_json(200, [{"id": i, "name": name} for i, name in enumerate(VOICES)])
@@ -82,8 +121,15 @@ def handler_for(synth: Synthesizer) -> type[BaseHTTPRequestHandler]:
                 self.send_json(404, {"error": "Unknown endpoint"})
 
         def do_POST(self) -> None:
+            if self.headers.get("Authorization") != f"Bearer {runtime.token}":
+                self.send_json(403, {"error": "Forbidden"})
+                return
             if self.path != "/synthesize":
                 self.send_json(404, {"error": "Unknown endpoint"})
+                return
+            synth = runtime.synth
+            if synth is None or runtime.phase != "ready":
+                self.send_json(503, {"error": "Model is not ready"})
                 return
             self.connection.settimeout(10)
             try:
@@ -127,14 +173,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--device", choices=("CPU", "GPU"), default="GPU")
-    parser.add_argument("--port", type=int, default=50040)
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--cache-dir", type=Path, required=True)
+    parser.add_argument("--state-file", type=Path, required=True)
+    parser.add_argument("--token", required=True)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    synth = Synthesizer(args.model.resolve(), args.device)
-    logging.info("Warming up %s on %s", MODEL_ID, args.device)
-    synth.synthesize("こんにちは。", 0, 1.0)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(synth))
-    logging.info("Ready: http://127.0.0.1:%d", args.port)
+    args.cache_dir.mkdir(parents=True, exist_ok=True)
+    runtime = Runtime(args.model.resolve(), args.device, args.cache_dir, args.token)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(runtime))
+    args.state_file.write_text(json.dumps({"port": server.server_port}), encoding="utf-8")
+    Thread(target=runtime.load, name="qwen-load", daemon=True).start()
+    logging.info("Listening: http://127.0.0.1:%d", server.server_port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

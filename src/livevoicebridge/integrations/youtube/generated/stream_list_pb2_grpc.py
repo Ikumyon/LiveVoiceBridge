@@ -5,7 +5,7 @@ import warnings
 
 from . import stream_list_pb2 as stream__list__pb2
 
-GRPC_GENERATED_VERSION = '1.81.1'
+GRPC_GENERATED_VERSION = '1.84.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 

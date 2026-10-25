@@ -31,6 +31,7 @@ from livevoicebridge.core.speech.models import (
     TtsEngineKind,
     VoicevoxConfig,
 )
+from livevoicebridge.integrations.storage.migrations import upgrade_schema1
 
 
 class ConfigError(RuntimeError):
@@ -48,15 +49,37 @@ class JsonConfigRepository:
             return config
 
         try:
-            document = json.loads(self.path.read_text(encoding="utf-8"))
+            original = self.path.read_bytes()
+            document = json.loads(original.decode("utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ConfigError(f"設定ファイルを読み込めません: {self.path}") from exc
         if not isinstance(document, dict):
             raise ConfigError("設定ファイルのルートはJSONオブジェクトである必要があります。")
 
+        if type(document.get("schema_version")) is int and document["schema_version"] == 1:
+            try:
+                values = upgrade_schema1(document, self._encode(default_config()))
+                config = self._decode(values)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+            self._backup_schema1(original)
+            self.save(config)
+            return config
         if document.get("schema_version") != SCHEMA_VERSION:
             raise ConfigError(f"未対応の設定スキーマです: {document.get('schema_version')}")
         return self._decode(document)
+
+    def _backup_schema1(self, original: bytes) -> None:
+        backup = self.path.with_suffix(self.path.suffix + ".schema1.bak")
+        try:
+            try:
+                with backup.open("xb") as stream:
+                    stream.write(original)
+            except FileExistsError:
+                if backup.read_bytes() != original:
+                    raise ConfigError(f"既存の変換前バックアップが異なるため、変換を中止しました: {backup}") from None
+        except OSError as exc:
+            raise ConfigError(f"変換前の設定をバックアップできません: {backup}") from exc
 
     def save(self, config: AppConfig) -> None:
         validate(config)

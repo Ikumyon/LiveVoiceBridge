@@ -1,5 +1,3 @@
-from threading import Lock
-
 import emoji
 
 from livevoicebridge import _native as native
@@ -16,11 +14,6 @@ from livevoicebridge.core.speech.models import (
 
 
 class NativeTextProcessor:
-    def __init__(self):
-        self._revision = -1
-        self._matcher = native.DictionaryMatcher([])
-        self._lock = Lock()
-
     def parse(self, text: str) -> SpeechPlan:
         items: list[SpeechItem] = []
         for segment in native.parse_comment(text):
@@ -45,11 +38,7 @@ class NativeTextProcessor:
         return SpeechPlan(tuple(items))
 
     def prepare(self, text: str, dictionary: DictionarySnapshot) -> str:
-        with self._lock:
-            if self._revision != dictionary.revision:
-                self._matcher = native.DictionaryMatcher([(entry.word, entry.reading) for entry in dictionary.entries])
-                self._revision = dictionary.revision
-            text = self._matcher.replace(text)
+        text = dictionary.replace(text)
         for item in reversed(emoji.emoji_list(text)):
             replacement = emoji.demojize(item["emoji"], language="ja").strip(":")
             text = text[: item["match_start"]] + replacement + text[item["match_end"] :]

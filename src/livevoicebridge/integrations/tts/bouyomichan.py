@@ -7,7 +7,7 @@ from livevoicebridge.integrations.processes.owned import OwnedProcess
 
 
 class BouyomiChanEngine:
-    def __init__(self, config: EngineConfig):
+    def __init__(self, config: BouyomiConfig):
         address = urlparse(config.url if "://" in config.url else f"tcp://{config.url}")
         if not address.hostname or not address.port:
             raise ValueError("棒読みちゃんの接続先はhost:portで指定してください。")

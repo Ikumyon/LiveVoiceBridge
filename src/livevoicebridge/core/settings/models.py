@@ -4,7 +4,7 @@ from livevoicebridge.core.chat.models import StreamingConfig
 from livevoicebridge.core.dictionary.models import DictionaryConfig
 from livevoicebridge.core.speech.models import SpeechConfig
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)

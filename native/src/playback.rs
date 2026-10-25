@@ -235,11 +235,11 @@ impl AudioPlayer {
     }
     fn play(&self, py: Python<'_>, clip: &AudioClip) -> PyResult<()> {
         let clip = clip.clone();
-        py.allow_threads(|| self.request(|reply| Request::Speech(clip, reply)))
+        py.detach(|| self.request(|reply| Request::Speech(clip, reply)))
             .map_err(PyRuntimeError::new_err)
     }
     fn sound(&self, py: Python<'_>, filename: String, overlap: bool) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let name = Path::new(filename.rsplit(['/', '\\']).next().unwrap_or(""));
             if name.components().count() != 1 || name.file_name().is_none() {
                 return Err("効果音はファイル名で指定してください。".into());
@@ -263,7 +263,7 @@ impl AudioPlayer {
             .unwrap_or_default()
     }
     fn close(&self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| self.shutdown())
+        py.detach(|| self.shutdown())
             .map_err(PyRuntimeError::new_err)
     }
 }

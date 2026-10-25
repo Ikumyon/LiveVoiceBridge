@@ -37,7 +37,8 @@ LiveVoiceBridge は、YouTube Live などの配信チャット（コメント）
 2. **棒読みちゃん**
    - Socket 通信（デフォルト: `127.0.0.1:50001`）を介して棒読みちゃん本体に音声生成と再生を指示します。
 3. **Qwen3-TTS 0.6B CustomVoice**
-   - 専用のOpenVINOサービスに接続します（`http://127.0.0.1:50040`）。日本語・標準話者 `ono_anna` を使用し、GPUでモデルを常駐させます。
+   - 設定画面の「モデルの準備」から、新規取得または手元のモデルを選択します。専用環境・変換・起動はアプリが管理します。
+   - 日本語・標準話者 `ono_anna` を使用します。ロードはバックグラウンドで行い、画面操作やコメント取得を待たせません。
    - 文単位で合成したWAVを既存の再生キューへ渡します。音量・話者・最大文字数を設定できます。
    - 導入・起動手順と制限は [Qwen3-TTSの導入](docs/qwen3.md) を参照してください。
 
@@ -118,8 +119,7 @@ LiveVoiceBridge は、YouTube Live などの配信チャット（コメント）
 - `services/qwen3`: 独立した環境の推論サービス。
 - `tools`・`packaging`: 開発コマンド・配布定義。
 
-Python本体は `src/livevoicebridge` 配下にあります。依存方向と循環参照はテストで検査します。
-第二弾の構造・検証範囲は [OS処理とリソース管理](docs/native-resource-refactor.md) を参照してください。
+Python本体は `src/livevoicebridge` 配下にあります。責務と依存方向は [現行設計](docs/architecture.md) を参照してください。
 
 ## データと起動
 
@@ -133,17 +133,19 @@ LiveVoiceBridge/
 ├── _internal/
 └── data/
     ├── config.json
-    ├── dictionary.json
+    ├── dictionary.db
     └── sounds/
 ```
 
 配布フォルダ全体で移動・削除できます。AppDataやOSの一時フォルダをアプリの保存先には使用しません。
 
-- `config.json`: schema_version 3。エンジン固有の設定を保存します。
-- `dictionary.json`: 全辞書グループの原子的なスナップショット。JSON・CSV・TXTのインポートに対応します。
+- `config.json`: schema_version 2。エンジン固有の設定を保存します。
+- `dictionary.db`: SQLiteの辞書。編集画面は256件単位で取得し、最大2,048件をキャッシュします。OKで編集差分を確定し、キャンセルでは破棄します。JSON・CSV・TXTのインポートに対応します。
 - `sounds/`: 効果音ファイル。
 
-旧import、main.py、旧設定、旧辞書配置への互換処理はありません。旧データは自動で移動・削除しません。
+設定スキーマ1は初回読み込み時にバックアップを作り、2へ変換して保存します。詳細は使用方法・マニュアルを参照してください。
+それ以外の旧設定、旧import、main.py、旧辞書配置への互換処理はありません。旧データの配置は自動で移動・削除しません。
+既存の `dictionary.json` を引き継ぐ場合は、辞書タブの「インポート」から明示的に取り込み、OKで保存してください。自動変換は行いません。
 
 ---
 

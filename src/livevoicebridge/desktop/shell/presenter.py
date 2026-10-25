@@ -4,9 +4,8 @@ from collections import OrderedDict
 from dataclasses import replace
 from time import monotonic
 
-from PySide6.QtCore import QByteArray, QObject, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QPainter, QPalette, QPixmap
-from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QObject, QSize, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QInputDialog,
@@ -31,19 +30,19 @@ from livevoicebridge.core.session.models import (
 )
 from livevoicebridge.core.session.service import SessionService
 from livevoicebridge.core.settings.models import ResourceLimits
+from livevoicebridge.core.speech.qwen import QwenState
 from livevoicebridge.core.telemetry.models import ApplicationIssue, MetricFrame
 from livevoicebridge.desktop.comments.avatars import AvatarCache
 from livevoicebridge.desktop.comments.delegate import CommentDelegate
 from livevoicebridge.desktop.comments.model import CommentListModel, CommentRow
 from livevoicebridge.desktop.comments.rendering import (
     COMMENT_LIST_STYLESHEET,
-    load_svg_icon,
 )
 from livevoicebridge.desktop.comments.window import CommentWindow
 from livevoicebridge.desktop.events import DesktopEvents
 from livevoicebridge.desktop.monitoring.popup import fixed_metric_catalog
+from livevoicebridge.desktop.rendering.icons import load_svg_icon, render_svg
 from livevoicebridge.desktop.resources import (
-    PIP_ICON_FILE,
     PIP_OFF_ICON_FILE,
     PIP_ON_ICON_FILE,
     SETTINGS_ICON_FILE,
@@ -73,6 +72,7 @@ class ShellPresenter(QObject):
         self.events = events
         self._executable_filter = executable_filter
         self._closed = False
+        self._qwen_phase = ""
         self.comment_window: CommentWindow | None = None
         self.settings_dialog: SettingsDialog | None = None
         self._comment_tab_layout = None
@@ -133,6 +133,10 @@ class ShellPresenter(QObject):
                 self.config.speech.active_engine.value,
                 self._socket_count,
             )
+        elif isinstance(event, QwenState):
+            if event.phase != self._qwen_phase:
+                self._qwen_phase = event.phase
+                self.append_log(f"[Qwen] {event.message}")
         elif isinstance(event, MetricsCollected):
             self._refresh_metrics()
         elif isinstance(event, SettingsApplied):
@@ -234,7 +238,7 @@ class ShellPresenter(QObject):
         if catalog and catalog != self.metric_catalog:
             self.metric_catalog = catalog
             if self.settings_dialog is not None:
-                self.settings_dialog.refresh_popup_metric_catalog(catalog)
+                self.settings_dialog.presentation.refresh_popup_metric_catalog(catalog)
         if self.comment_window is not None:
             self.comment_window.update_metrics(frames)
 
@@ -247,14 +251,7 @@ class ShellPresenter(QObject):
         if self.settings_dialog is not None:
             self.settings_dialog.dialog_window.raise_()
             return
-        groups = {
-            name: [
-                {"word": entry.word, "reading": entry.reading, "pos": entry.part_of_speech, "comment": entry.comment}
-                for entry in entries
-            ]
-            for name, entries in self.session.dictionary.groups().items()
-        }
-        dialog = SettingsDialog(self.config, groups, self.metric_catalog, self._executable_filter)
+        dialog = SettingsDialog(self.config, self.metric_catalog, self._executable_filter)
         SettingsPresenter(dialog, self.session)
         self.settings_dialog = dialog
         dialog.settings_changed.connect(lambda: self._preview_dialog(dialog))
@@ -263,14 +260,7 @@ class ShellPresenter(QObject):
 
     def _preview_dialog(self, dialog):
         if self.comment_window is not None:
-            self.comment_window.opacity = dialog.opacity_slider.value() / 100
-            self.comment_window.header_opacity = dialog.header_opacity_slider.value() / 100
-            self.comment_window.border_opacity = dialog.border_opacity_slider.value() / 100
-            self.comment_window.presentation = replace(
-                self.config.presentation, background_color=dialog.bg_color_hex, border_color=dialog.border_color_hex
-            )
-            self.comment_window.apply_metrics_settings(dialog.get_popup_metrics_settings())
-            self.comment_window.update()
+            self._preview_presentation(dialog.presentation.read())
 
     def _finish_settings(self, dialog, result):
         self.settings_dialog = None
@@ -346,8 +336,8 @@ class ShellPresenter(QObject):
             self.settings_button.setIcon(load_svg_icon(SETTINGS_ICON_FILE, self.settings_button))
             self.settings_button.setIconSize(QSize(24, 24))
 
-        if PIP_ICON_FILE.exists() and self.popout_button is not None:
-            self.popout_button.setIcon(load_svg_icon(PIP_ICON_FILE, self.popout_button))
+        if PIP_OFF_ICON_FILE.exists() and self.popout_button is not None:
+            self.popout_button.setIcon(load_svg_icon(PIP_OFF_ICON_FILE, self.popout_button))
             self.popout_button.setText("")
             self.popout_button.setIconSize(QSize(24, 24))
 
@@ -380,20 +370,7 @@ class ShellPresenter(QObject):
             self.comment_list.setParent(None)
 
         if TV_ICON_FILE.exists():
-            try:
-                with open(TV_ICON_FILE, encoding="utf-8") as f:
-                    svg_content = f.read()
-                text_color = self.window.palette().color(QPalette.ColorRole.Text).name()
-                modified_svg = svg_content.replace("currentColor", text_color)
-                renderer = QSvgRenderer(QByteArray(modified_svg.encode("utf-8")))
-                pixmap = QPixmap(64, 64)
-                pixmap.fill(Qt.GlobalColor.transparent)
-                painter = QPainter(pixmap)
-                renderer.render(painter)
-                painter.end()
-                self._comment_placeholder_icon.setPixmap(pixmap)
-            except Exception:
-                pass
+            self._comment_placeholder_icon.setPixmap(render_svg(TV_ICON_FILE, self.window, 64))
         if self._comment_placeholder is not None:
             self._comment_placeholder.show()
 

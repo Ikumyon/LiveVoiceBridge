@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>QwenSetup</class>
+ <widget class="QDialog" name="QwenSetup">
+  <property name="windowTitle"><string>Qwenの準備</string></property>
+  <property name="minimumSize"><size><width>600</width><height>480</height></size></property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Qwen3-TTS 0.6B CustomVoiceを準備します</string></property></widget></item>
+   <item><widget class="QRadioButton" name="downloadRadio"><property name="text"><string>モデルをダウンロードする</string></property><property name="checked"><bool>true</bool></property></widget></item>
+   <item><widget class="QRadioButton" name="localRadio"><property name="text"><string>手元のモデルを使う</string></property></widget></item>
+   <item><layout class="QHBoxLayout" name="sourceLayout">
+    <item><widget class="QLineEdit" name="sourceLine"><property name="readOnly"><bool>true</bool></property><property name="placeholderText"><string>モデル全体のフォルダーを選択</string></property></widget></item>
+    <item><widget class="QPushButton" name="browseButton"><property name="text"><string>参照…</string></property><property name="enabled"><bool>false</bool></property></widget></item>
+   </layout></item>
+   <item><widget class="QComboBox" name="deviceCombo"><item><property name="text"><string>GPU</string></property></item><item><property name="text"><string>CPU</string></property></item></widget></item>
+   <item><widget class="QLabel" name="storageLabel"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>専用環境・取得モデル・変換結果はアプリ配置先内に保存します。元のモデルや他用途のPython環境は変更しません。</string></property></widget></item>
+   <item><widget class="QLabel" name="noticeLabel"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>初回の環境取得にはネット接続が必要です。通常形式のモデルはOpenVINO形式へ変換します。変換には取得元モデルのPythonコードを使用します。</string></property></widget></item>
+   <item><widget class="QLabel" name="stateLabel"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>準備方法を選んで「準備を開始」を押してください。</string></property></widget></item>
+   <item><widget class="QProgressBar" name="progressBar"><property name="visible"><bool>false</bool></property><property name="value"><number>0</number></property></widget></item>
+   <item><widget class="QPushButton" name="detailsButton"><property name="text"><string>詳細ログ</string></property><property name="checkable"><bool>true</bool></property></widget></item>
+   <item><widget class="QPlainTextEdit" name="logText"><property name="visible"><bool>false</bool></property><property name="readOnly"><bool>true</bool></property><property name="maximumBlockCount"><number>1000</number></property></widget></item>
+   <item><layout class="QHBoxLayout" name="buttonLayout">
+    <item><widget class="QPushButton" name="cancelButton"><property name="text"><string>閉じる</string></property></widget></item>
+    <item><widget class="QPushButton" name="startButton"><property name="text"><string>準備を開始</string></property></widget></item>
+   </layout></item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

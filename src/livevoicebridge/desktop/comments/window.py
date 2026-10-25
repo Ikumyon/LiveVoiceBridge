@@ -135,7 +135,7 @@ class CommentWindow(QWidget):
     def _safe_ratio(value) -> float:
         try:
             return max(0.1, min(float(value), 0.9))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return 0.35
 
     def _configure_splitter(self) -> None:

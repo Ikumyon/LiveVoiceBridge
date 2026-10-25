@@ -3,14 +3,12 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from pathlib import Path
 from queue import Empty, Queue
 from threading import BoundedSemaphore, Event, Lock, Thread
 
 from livevoicebridge.core.chat.models import CommentEvent
 from livevoicebridge.core.chat.planning import plan_comment
 from livevoicebridge.core.chat.ports import StreamingSource
-from livevoicebridge.core.dictionary.ports import DictionaryGroups
 from livevoicebridge.core.dictionary.service import DictionaryService
 from livevoicebridge.core.session.models import (
     ApplicationEvent,
@@ -25,7 +23,7 @@ from livevoicebridge.core.session.models import (
 )
 from livevoicebridge.core.settings.models import AppConfig, PresentationConfig
 from livevoicebridge.core.settings.service import SettingsService, validate
-from livevoicebridge.core.speech.models import EngineConfig, Speaker, SpeechProgress
+from livevoicebridge.core.speech.models import EngineConfig, Qwen3Config, Speaker, SpeechProgress, TtsEngineKind
 from livevoicebridge.core.speech.pipeline import SpeechPipeline
 from livevoicebridge.core.speech.ports import (
     AudioOutput,
@@ -34,6 +32,7 @@ from livevoicebridge.core.speech.ports import (
     ExternalSpeechOutput,
     TextProcessor,
 )
+from livevoicebridge.core.speech.qwen import QwenRuntime, QwenState
 from livevoicebridge.core.telemetry.models import ApplicationIssue, ErrorKind
 from livevoicebridge.core.telemetry.ports import MetricsProvider, UpdateProvider
 from livevoicebridge.core.telemetry.store import MetricsStore
@@ -52,6 +51,7 @@ class SessionService:
         updates: UpdateProvider,
         publish: Callable[[ApplicationEvent], None],
         avatar_loader: Callable[[str], bytes],
+        qwen: QwenRuntime | None = None,
     ):
         self.settings = settings
         self.dictionary = dictionary
@@ -64,6 +64,7 @@ class SessionService:
         self._updates = updates
         self._publish = publish
         self._avatar_loader = avatar_loader
+        self.qwen = qwen
         self._auxiliary = ThreadPoolExecutor(max_workers=2, thread_name_prefix="desktop-data")
         self._media = ThreadPoolExecutor(max_workers=2, thread_name_prefix="avatars")
         self._avatar_slots = BoundedSemaphore(64)
@@ -83,6 +84,54 @@ class SessionService:
         self._monitor = Thread(target=self._observe, name="system-metrics")
         self._control.start()
         self._monitor.start()
+
+    def initialize_qwen(self) -> None:
+        if self.qwen is not None:
+            config = self.settings.current.speech.engine()
+            self.qwen.configure(config if isinstance(config, Qwen3Config) else None)
+
+    def qwen_prepared(self, model: str, device: str, generation: int) -> None:
+        def apply() -> None:
+            if self.qwen is None or self.qwen.state.generation != generation:
+                return
+            config = self.settings.current
+            engines = tuple(
+                replace(engine, model_path=model, device=device) if isinstance(engine, Qwen3Config) else engine
+                for engine in config.speech.engines
+            )
+            self._apply(replace(config, speech=replace(config.speech, engines=engines)), None)
+
+        self._post(apply)
+
+    def qwen_changed(self, state: QwenState) -> None:
+        self._post(lambda: self._qwen_changed(state))
+
+    def restart_qwen(self) -> None:
+        def restart() -> None:
+            if self.qwen is None:
+                return
+            if self._pipeline is not None and self.settings.current.speech.active_engine is TtsEngineKind.QWEN3:
+                self._pipeline.cancel()
+            self.qwen.restart()
+
+        self._post(restart)
+
+    def _qwen_changed(self, state: QwenState) -> None:
+        if self.qwen is None or state.generation != self.qwen.state.generation:
+            return
+        if self.settings.current.speech.active_engine is not TtsEngineKind.QWEN3:
+            return
+        if state.phase == "error" and self._pipeline is not None:
+            self._pipeline.cancel()
+        elif state.busy and self._pipeline is not None:
+            self._pipeline.cancel()
+        elif state.phase == "ready" and self._pipeline is not None and not self._pipeline.accepting:
+            self._pipeline.join()
+            self._pipeline = None
+            if self._engine is not None:
+                self._engine.close()
+            if self._prepare(self._session):
+                self._set_state(RuntimeState.RUNNING)
 
     @property
     def state(self) -> RuntimeState:
@@ -163,7 +212,8 @@ class SessionService:
         self._session = token
         config = self.settings.current
         self._engine = self._engine_factory(config.speech.engine())
-        self._engine.ensure_ready()
+        if not isinstance(config.speech.engine(), Qwen3Config):
+            self._engine.ensure_ready()
         if not self._current(token):
             self._dispose()
             self._set_state(RuntimeState.IDLE)
@@ -180,6 +230,7 @@ class SessionService:
             self._issue,
             config.speech.queue_limit,
             config.resources.audio_mib,
+            self.qwen.wait_ready if isinstance(config.speech.engine(), Qwen3Config) and self.qwen else None,
         )
         self._pipeline.start()
         return True
@@ -225,7 +276,7 @@ class SessionService:
         config = self.settings.current
         plan = plan_comment(event, config.streaming, config.speech, self._processor)
         if plan is not None and self._pipeline is not None:
-            if not self._pipeline.submit(plan):
+            if self._pipeline.accepting and not self._pipeline.submit(plan):
                 self._issue("読み上げキューが満杯です。このコメントの読み上げを省略しました。")
 
     def _source_failed(self, token: int, message: str) -> None:
@@ -273,26 +324,73 @@ class SessionService:
         if errors:
             raise RuntimeError(" / ".join(errors))
 
-    def apply_settings(self, config: AppConfig, groups: DictionaryGroups | None = None) -> None:
-        self._post(lambda: self._apply(config, groups))
+    def apply_settings(
+        self,
+        config: AppConfig,
+        dictionary_draft: int | None = None,
+        qwen_base: Qwen3Config | None = None,
+        complete: Callable[[str], None] | None = None,
+    ) -> None:
+        def apply() -> None:
+            draft = config
+            # Provisioning saves independently of the settings draft. Merge on the
+            # serialized command lane so an immediately closed dialog cannot undo it.
+            latest = self.settings.current.speech.engine(TtsEngineKind.QWEN3)
+            if qwen_base is not None and isinstance(latest, Qwen3Config):
+                engines = tuple(
+                    replace(
+                        engine,
+                        model_path=latest.model_path,
+                        device=latest.device if engine.device == qwen_base.device else engine.device,
+                    )
+                    if isinstance(engine, Qwen3Config)
+                    else engine
+                    for engine in draft.speech.engines
+                )
+                draft = replace(draft, speech=replace(draft.speech, engines=engines))
+            try:
+                error = self._apply(draft, dictionary_draft)
+            except Exception as exc:
+                error = str(exc)
+                self._issue(error)
+            if complete is not None:
+                complete(error)
 
-    def _apply(self, config: AppConfig, groups: DictionaryGroups | None) -> None:
+        self._post(apply)
+
+    def _apply(self, config: AppConfig, dictionary_draft: int | None) -> str:
         previous = self.settings.current
         try:
             validate(config)
             self.settings.apply(config)
         except Exception as exc:
             self._issue(str(exc))
-            return
-        if groups is not None:
+            return str(exc)
+        error = ""
+        if dictionary_draft is not None:
             try:
-                self.dictionary.replace(groups)
+                self.dictionary.repository.commit(dictionary_draft)
             except Exception as exc:
-                self._issue(f"設定は保存しましたが辞書の保存に失敗しました: {exc}")
+                error = f"設定は保存しましたが辞書の保存に失敗しました: {exc}"
+                self._issue(error)
+        try:
+            self._apply_runtime(previous, config)
+        except Exception as exc:
+            self._issue(f"設定は保存しましたが実行状態の更新に失敗しました: {exc}")
+        return error
+
+    def _apply_runtime(self, previous: AppConfig, config: AppConfig) -> None:
         self._publish(SettingsApplied(config, self.settings.revision))
+        self.initialize_qwen()
         if self._pipeline is not None:
             self._pipeline.set_audio_limit(config.resources.audio_mib)
-        if previous.speech == config.speech and previous.streaming == config.streaming:
+        speech_changed = (
+            previous.speech.active_engine != config.speech.active_engine
+            or previous.speech.engine() != config.speech.engine()
+            or previous.speech.read_blocks != config.speech.read_blocks
+            or previous.speech.queue_limit != config.speech.queue_limit
+        )
+        if not speech_changed and previous.streaming == config.streaming:
             if self._pipeline is not None:
                 self._pipeline.set_revision(self.settings.revision)
             return
@@ -312,7 +410,10 @@ class SessionService:
                 self._auxiliary.submit(self._discover, config, complete)
 
     def apply_presentation(self, presentation: PresentationConfig) -> None:
-        self._post(lambda: self._apply(replace(self.settings.current, presentation=presentation), None))
+        def apply() -> None:
+            self._apply(replace(self.settings.current, presentation=presentation), None)
+
+        self._post(apply)
 
     def request_avatar(self, url: str, complete: Callable[[str, bytes], None]) -> None:
         def fetch() -> None:
@@ -332,20 +433,6 @@ class SessionService:
                     complete(url, b"")
                     return
                 self._media.submit(fetch)
-
-    def import_dictionary(self, path: Path, complete) -> None:
-        def load() -> None:
-            try:
-                entries = self.dictionary.import_file(path)
-                error = ""
-            except Exception as exc:
-                entries, error = (), str(exc)
-            if not self._closing:
-                complete(entries, error)
-
-        with self._lock:
-            if not self._closing:
-                self._auxiliary.submit(load)
 
     def _discover(self, config: EngineConfig, complete: Callable[[tuple[Speaker, ...], str], None]) -> None:
         engine = None
@@ -404,13 +491,14 @@ class SessionService:
 
     def _shutdown_resources(self) -> None:
         try:
-            for close in (self._dispose, self._audio.close):
+            for close in (*([self.qwen.close] if self.qwen else []), self._dispose, self._audio.close):
                 try:
                     close()
                 except Exception as exc:
                     self._issue(str(exc))
             self._auxiliary.shutdown(wait=True, cancel_futures=True)
             self._media.shutdown(wait=True, cancel_futures=True)
+            self.dictionary.close()
             self._monitor.join()
             self._metrics.close()
         finally:

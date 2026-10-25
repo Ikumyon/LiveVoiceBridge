@@ -4,6 +4,7 @@ from enum import StrEnum
 from livevoicebridge.core.chat.models import CommentEvent
 from livevoicebridge.core.settings.models import AppConfig
 from livevoicebridge.core.speech.models import SpeechProgress
+from livevoicebridge.core.speech.qwen import QwenState
 from livevoicebridge.core.telemetry.models import ApplicationIssue
 
 
@@ -62,4 +63,5 @@ ApplicationEvent = (
     | ShutdownCompleted
     | ApplicationIssue
     | SpeechProgress
+    | QwenState
 )

@@ -31,15 +31,15 @@ impl Default for LinuxMetricsProvider {
 impl LinuxMetricsProvider {
     pub fn new() -> Self {
         let mut sys = System::new_with_specifics(
-            RefreshKind::new()
+            RefreshKind::nothing()
                 .with_cpu(CpuRefreshKind::everything())
                 .with_memory(MemoryRefreshKind::everything()),
         );
-        sys.refresh_cpu();
+        sys.refresh_cpu_usage();
         sys.refresh_memory();
 
         let mut networks = Networks::new_with_refreshed_list();
-        networks.refresh();
+        networks.refresh(true);
 
         let gpu = LinuxGpuMetrics::new();
 
@@ -62,8 +62,8 @@ impl MetricsProvider for LinuxMetricsProvider {
             .max(0.001);
         self.last_collect_time = now;
 
-        self.sys.refresh_cpu();
-        let cpu_percent = self.sys.global_cpu_info().cpu_usage();
+        self.sys.refresh_cpu_usage();
+        let cpu_percent = self.sys.global_cpu_usage();
 
         self.sys.refresh_memory();
         let total_mem_bytes = self.sys.total_memory();
@@ -76,11 +76,10 @@ impl MetricsProvider for LinuxMetricsProvider {
             0.0
         };
 
-        if self.last_devices.elapsed() >= Duration::from_secs(10) {
-            self.networks.refresh_list();
+        let remove_missing = self.last_devices.elapsed() >= Duration::from_secs(10);
+        self.networks.refresh(remove_missing);
+        if remove_missing {
             self.last_devices = Instant::now();
-        } else {
-            self.networks.refresh();
         }
         let mut total_recv_bytes: u64 = 0;
         let mut total_send_bytes: u64 = 0;
