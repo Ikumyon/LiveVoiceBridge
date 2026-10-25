@@ -231,7 +231,9 @@ def main() -> None:
         stage = prepare_source(build_version())
         context = build_environment(stage, ROOT / "build/ci-venv", fresh=True)
         build_rust(context)
-        archive_distribution(build_python(context), context.windows)
+        distribution = build_python(context)
+        if os.environ.get("GITHUB_REF", "").startswith("refs/tags/"):
+            archive_distribution(distribution, context.windows)
     else:
         context = build_environment(ROOT, ROOT / "venv")
         if args.target == "rust":

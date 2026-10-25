@@ -63,8 +63,10 @@ fn decode_pcm16_wav(data: &[u8]) -> Result<(WavFormat, Vec<i16>), String> {
             }
             pcm = Some(
                 data[start..end]
-                    .chunks_exact(2)
-                    .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|chunk| i16::from_le_bytes(*chunk))
                     .collect(),
             );
         }
@@ -150,7 +152,7 @@ fn process_effects(
     }
     if !effect && !mono_pan {
         if channels == 2 {
-            for pair in samples.chunks_exact_mut(2) {
+            for pair in samples.as_chunks_mut::<2>().0 {
                 match panning {
                     Some("left") => pair[1] = 0,
                     Some("right") => pair[0] = 0,
