@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Networks, RefreshKind, System};
 
 use crate::traits::MetricsProvider;
-use crate::types::{GpuMetric, MetricsSnapshot};
+use crate::types::MetricsSnapshot;
 
 pub struct LinuxMetricsProvider {
     sys: System,
