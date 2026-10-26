@@ -1,3 +1,5 @@
+import re
+
 import requests
 
 
@@ -11,6 +13,9 @@ class GitHubUpdateProvider:
         version = str(response.json()["tag_name"])
 
         def numbers(value: str) -> tuple[int, ...]:
-            return tuple(int(part) for part in value.lstrip("v").split("."))
+            match = re.match(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)", value, re.ASCII)
+            if match is None:
+                raise ValueError(f"Version must start with X.Y.Z or vX.Y.Z: {value!r}")
+            return tuple(int(part) for part in match.group(1, 2, 3))
 
         return version if numbers(version) > numbers(self._version) else None

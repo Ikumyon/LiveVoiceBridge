@@ -23,7 +23,7 @@ MANIFESTS = (
     ("native/Cargo.toml", "package"),
     ("services/qwen3/pyproject.toml", "project"),
 )
-TAG_PATTERN = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", re.ASCII)
+TAG_PATTERN = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)(.*)", re.ASCII)
 
 
 def run(args: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
@@ -35,9 +35,14 @@ def git(*args: str) -> str:
 
 
 def tag_version(tag: str) -> str:
-    if TAG_PATTERN.fullmatch(tag) is None:
-        raise ValueError("Release tags must have the form vX.Y.Z (no leading zeros).")
-    return tag[1:]
+    match = TAG_PATTERN.fullmatch(tag)
+    if match is None:
+        raise ValueError(f"Invalid release tag {tag!r}. Expected vX.Y.Z followed by an optional arbitrary suffix.")
+    version = ".".join(str(int(part)) for part in match.group(1, 2, 3))
+    if suffix := match.group(4):
+        # Encode any suffix losslessly in a form accepted by both PEP 440 and SemVer.
+        version += f"+tag.x{suffix.encode('utf-8').hex()}"
+    return version
 
 
 def build_version() -> str:
