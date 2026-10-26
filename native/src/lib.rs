@@ -3,6 +3,7 @@ mod bindings;
 mod dictionary;
 mod platform;
 mod playback;
+mod plugin_rpc;
 mod process;
 mod runtime;
 pub mod text;
@@ -23,6 +24,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<audio::AudioClip>()?;
     m.add_class::<playback::AudioPlayer>()?;
     m.add_class::<process::ManagedProcess>()?;
+    m.add_class::<plugin_rpc::PluginProcess>()?;
+    m.add_function(wrap_pyfunction!(plugin_rpc::plugin_platform, m)?)?;
     m.add_class::<runtime::PlatformPaths>()?;
     m.add_class::<dictionary::DictionaryDatabase>()?;
     m.add_class::<dictionary::DictionarySnapshot>()?;

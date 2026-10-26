@@ -21,17 +21,12 @@ from livevoicebridge.core.settings.models import (
 )
 from livevoicebridge.core.settings.service import validate
 from livevoicebridge.core.speech.models import (
-    BouyomiConfig,
-    CoeiroinkConfig,
     EngineConfig,
-    Qwen3Config,
     ReadBlock,
     ReadBlockKind,
     SpeechConfig,
-    TtsEngineKind,
-    VoicevoxConfig,
 )
-from livevoicebridge.integrations.storage.migrations import upgrade_schema1
+from livevoicebridge.integrations.storage.migrations import legacy_defaults, upgrade_schema1, upgrade_schema2
 
 
 class ConfigError(RuntimeError):
@@ -56,21 +51,25 @@ class JsonConfigRepository:
         if not isinstance(document, dict):
             raise ConfigError("設定ファイルのルートはJSONオブジェクトである必要があります。")
 
-        if type(document.get("schema_version")) is int and document["schema_version"] == 1:
+        old_version = document.get("schema_version")
+        if type(old_version) is int and old_version in (1, 2):
             try:
-                values = upgrade_schema1(document, self._encode(default_config()))
+                values = document
+                if old_version == 1:
+                    values = upgrade_schema1(values, legacy_defaults(self._encode(default_config())))
+                values = upgrade_schema2(values)
                 config = self._decode(values)
-            except ValueError as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 raise ConfigError(str(exc)) from exc
-            self._backup_schema1(original)
+            self._backup(original, old_version)
             self.save(config)
             return config
         if document.get("schema_version") != SCHEMA_VERSION:
             raise ConfigError(f"未対応の設定スキーマです: {document.get('schema_version')}")
         return self._decode(document)
 
-    def _backup_schema1(self, original: bytes) -> None:
-        backup = self.path.with_suffix(self.path.suffix + ".schema1.bak")
+    def _backup(self, original: bytes, version: int) -> None:
+        backup = self.path.with_suffix(self.path.suffix + f".schema{version}.bak")
         try:
             try:
                 with backup.open("xb") as stream:
@@ -99,9 +98,6 @@ class JsonConfigRepository:
     @staticmethod
     def _encode(config: AppConfig) -> dict[str, Any]:
         document = asdict(config)
-        document["speech"]["active_engine"] = config.speech.active_engine.value
-        for index, engine in enumerate(config.speech.engines):
-            document["speech"]["engines"][index]["kind"] = engine.kind.value
         for index, block in enumerate(config.speech.read_blocks):
             document["speech"]["read_blocks"][index]["kind"] = block.kind.value
         document["presentation"]["popup_metrics"]["display_modes"] = dict(
@@ -113,7 +109,6 @@ class JsonConfigRepository:
     def _decode(document: dict[str, Any]) -> AppConfig:
         try:
             speech_data = dict(document["speech"])
-            speech_data["active_engine"] = TtsEngineKind(speech_data["active_engine"])
             speech_data["engines"] = tuple(JsonConfigRepository._decode_engine(item) for item in speech_data["engines"])
             speech_data["read_blocks"] = tuple(
                 JsonConfigRepository._decode_read_block(item) for item in speech_data["read_blocks"]
@@ -130,7 +125,9 @@ class JsonConfigRepository:
             values["speech"] = SpeechConfig(**speech_data)
             values["presentation"] = PresentationConfig(**presentation_data)
             values["dictionary"] = DictionaryConfig(**document["dictionary"])
-            values["application"] = ApplicationConfig(**document["application"])
+            application = dict(document["application"])
+            application["plugin_enabled"] = tuple(tuple(item) for item in application["plugin_enabled"])
+            values["application"] = ApplicationConfig(**application)
             values["resources"] = ResourceLimits(**document["resources"])
             config = AppConfig(**values)
             validate(config)
@@ -140,16 +137,7 @@ class JsonConfigRepository:
 
     @staticmethod
     def _decode_engine(data: dict[str, Any]) -> EngineConfig:
-        kind = TtsEngineKind(data["kind"])
-        classes = {
-            TtsEngineKind.VOICEVOX: VoicevoxConfig,
-            TtsEngineKind.COEIROINK: CoeiroinkConfig,
-            TtsEngineKind.BOUYOMICHAN: BouyomiConfig,
-            TtsEngineKind.QWEN3: Qwen3Config,
-        }
-        values = dict(data)
-        values["kind"] = kind
-        return classes[kind](**values)
+        return EngineConfig(**data)
 
     @staticmethod
     def _decode_read_block(data: dict[str, Any]) -> ReadBlock:

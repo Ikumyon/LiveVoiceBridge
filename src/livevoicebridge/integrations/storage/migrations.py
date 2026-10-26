@@ -1,15 +1,6 @@
 """Conversions for released configuration schemas; no filesystem operations."""
 
-from dataclasses import fields
 from typing import Any
-
-from livevoicebridge.core.speech.models import (
-    BouyomiConfig,
-    CoeiroinkConfig,
-    Qwen3Config,
-    TtsEngineKind,
-    VoicevoxConfig,
-)
 
 
 def upgrade_schema1(document: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
@@ -21,12 +12,6 @@ def upgrade_schema1(document: dict[str, Any], defaults: dict[str, Any]) -> dict[
         speech = dict(document["speech"])
         speech.setdefault("queue_limit", defaults["speech"]["queue_limit"])
         templates = {engine["kind"]: engine for engine in defaults["speech"]["engines"]}
-        engine_types = {
-            TtsEngineKind.VOICEVOX: VoicevoxConfig,
-            TtsEngineKind.COEIROINK: CoeiroinkConfig,
-            TtsEngineKind.BOUYOMICHAN: BouyomiConfig,
-            TtsEngineKind.QWEN3: Qwen3Config,
-        }
         retired = {"supertonic", "supertonic_lightweight"}
         converted: dict[str, dict[str, Any]] = {}
         seen: set[str] = set()
@@ -39,15 +24,14 @@ def upgrade_schema1(document: dict[str, Any], defaults: dict[str, Any]) -> dict[
             seen.add(kind)
             if kind in retired:
                 continue
-            engine_type = engine_types[TtsEngineKind(kind)]
-            allowed = {item.name for item in fields(engine_type)}
+            allowed = set(templates[kind])
             migrated = dict(templates[kind])
             migrated.update({key: value for key, value in engine.items() if key in allowed})
-            if kind in (TtsEngineKind.VOICEVOX, TtsEngineKind.COEIROINK):
+            if kind in ("voicevox", "coeiroink"):
                 for key in ("intonation", "pause_length", "pre_phoneme_length", "post_phoneme_length"):
                     if migrated[key] is None:
                         migrated[key] = templates[kind][key]
-            if kind == TtsEngineKind.BOUYOMICHAN:
+            if kind == "bouyomichan":
                 for key in ("speed", "pitch", "volume"):
                     value = migrated[key]
                     if type(value) is float:
@@ -62,3 +46,62 @@ def upgrade_schema1(document: dict[str, Any], defaults: dict[str, Any]) -> dict[
         return values
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"スキーマ1の設定を2へ変換できません: {exc}") from exc
+
+
+def legacy_defaults(defaults: dict[str, Any]) -> dict[str, Any]:
+    """Schema 2 templates exist only for converting released settings."""
+    common = dict(
+        url="http://127.0.0.1:50021",
+        executable_path="",
+        speaker_id=1,
+        max_length=50,
+        speed=1.0,
+        pitch=0.0,
+        volume=1.0,
+        intonation=1.0,
+        pause_length=1.0,
+        pre_phoneme_length=0.1,
+        post_phoneme_length=0.1,
+    )
+    return {
+        **defaults,
+        "schema_version": 2,
+        "speech": {
+            **defaults["speech"],
+            "engines": [
+                dict(common, kind="voicevox"),
+                dict(common, kind="coeiroink", url="http://127.0.0.1:50032"),
+                dict(
+                    kind="bouyomichan",
+                    url="127.0.0.1:50001",
+                    executable_path="",
+                    speaker_id=0,
+                    max_length=50,
+                    speed=-1,
+                    pitch=-1,
+                    volume=-1,
+                ),
+                dict(kind="qwen3", model_path="", device="GPU", speaker_id=0, max_length=50, volume=1.0),
+            ],
+        },
+    }
+
+
+def upgrade_schema2(document: dict[str, Any]) -> dict[str, Any]:
+    values = dict(document)
+    speech = dict(document["speech"])
+    engines = []
+    for item in speech["engines"]:
+        engine = dict(item)
+        kind = engine.pop("kind")
+        speaker = engine.pop("speaker_id")
+        if type(speaker) is not int or speaker < 0:
+            raise ValueError("旧設定の話者IDが不正です。")
+        engines.append(
+            dict(engine_id=kind, speaker_id=str(speaker), max_length=engine.pop("max_length"), settings=engine)
+        )
+    speech["engines"] = engines
+    application = dict(values["application"])
+    application.setdefault("plugin_enabled", [])
+    values.update(schema_version=3, speech=speech, application=application)
+    return values

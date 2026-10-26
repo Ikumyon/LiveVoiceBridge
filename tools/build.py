@@ -103,7 +103,11 @@ def inspect_distribution(stage: Path, distribution: Path, version: str, windows:
     for relative, section in MANIFESTS:
         if tomllib.loads((stage / relative).read_text(encoding="utf-8"))[section]["version"] != version:
             raise ValueError(f"Build version mismatch: {relative}")
-    for relative in ("src/livevoicebridge/desktop/resources", "src/livevoicebridge/integrations/qwen/resources"):
+    for relative in (
+        "src/livevoicebridge/desktop/resources",
+        "src/livevoicebridge/integrations/qwen/resources",
+        "src/livevoicebridge/plugins/builtin",
+    ):
         source = stage / relative
         destination = internal / Path(relative).relative_to("src")
         for path in source.rglob("*"):

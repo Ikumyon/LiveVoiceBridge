@@ -12,10 +12,9 @@ from threading import Condition, Event, Thread
 import requests
 
 from livevoicebridge import _native
-from livevoicebridge.core.speech.models import Qwen3Config
-from livevoicebridge.core.speech.qwen import QwenState
 from livevoicebridge.integrations.qwen.models import validate_model
 from livevoicebridge.integrations.qwen.provision import Cancelled, Provisioner
+from livevoicebridge.plugins.builtin.qwen3.contracts import QwenConfig, QwenState
 
 
 class QwenManager:
@@ -38,7 +37,7 @@ class QwenManager:
         self._prepared = prepared
         self._condition = Condition()
         self._state = QwenState()
-        self._desired: Qwen3Config | None = None
+        self._desired: QwenConfig | None = None
         self._generation = 0
         self._closed = False
         self._preparing = False
@@ -66,7 +65,7 @@ class QwenManager:
             self._condition.notify_all()
             self._publish(self._state)
 
-    def configure(self, config: Qwen3Config | None) -> None:
+    def configure(self, config: QwenConfig | None) -> None:
         with self._condition:
             if self._closed:
                 return

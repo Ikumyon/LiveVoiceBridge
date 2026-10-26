@@ -1,14 +1,14 @@
 import requests
 
-from livevoicebridge.core.speech.models import AudioData, EngineConfig, Speaker, SpeechControls, VoicevoxConfig
+from livevoicebridge.core.speech.models import AudioData, EngineConfig, Speaker, SpeechControls
 from livevoicebridge.integrations.native.audio import decode_response
 from livevoicebridge.integrations.processes.owned import OwnedProcess
 
 
 class VoicevoxEngine:
-    def __init__(self, config: VoicevoxConfig):
-        self._url = config.url.rstrip("/")
-        self._process = OwnedProcess(config.executable_path)
+    def __init__(self, config: EngineConfig):
+        self._url = str(config.settings["url"]).rstrip("/")
+        self._process = OwnedProcess(str(config.settings["executable_path"]))
 
     def _probe(self) -> bool:
         try:
@@ -23,15 +23,13 @@ class VoicevoxEngine:
         response = requests.get(f"{self._url}/speakers", timeout=(2, 5))
         response.raise_for_status()
         return tuple(
-            Speaker(int(style["id"]), str(speaker["name"]), str(style["name"]))
+            Speaker(str(style["id"]), str(speaker["name"]), str(style["name"]))
             for speaker in response.json()
             for style in speaker["styles"]
         )
 
     def synthesize(self, text: str, controls: SpeechControls, config: EngineConfig, max_bytes: int) -> AudioData:
-        if not isinstance(config, VoicevoxConfig):
-            raise TypeError("VOICEVOX形式の設定が必要です。")
-        speaker = controls.speaker_id if controls.speaker_id is not None else config.speaker_id
+        speaker = int(controls.speaker_id) if controls.speaker_id is not None else int(config.speaker_id)
         response = requests.post(
             f"{self._url}/audio_query",
             params={"text": text, "speaker": speaker},
@@ -41,13 +39,15 @@ class VoicevoxEngine:
         query = response.json()
         query.update(
             {
-                "speedScale": controls.speed if controls.speed is not None else config.speed,
-                "pitchScale": controls.pitch if controls.pitch is not None else config.pitch,
-                "volumeScale": controls.volume if controls.volume is not None else config.volume,
-                "intonationScale": config.intonation,
-                "pauseLengthScale": config.pause_length,
-                "prePhonemeLength": config.pre_phoneme_length,
-                "postPhonemeLength": config.post_phoneme_length,
+                "speedScale": controls.speed if controls.speed is not None else float(str(config.settings["speed"])),
+                "pitchScale": controls.pitch if controls.pitch is not None else float(str(config.settings["pitch"])),
+                "volumeScale": controls.volume
+                if controls.volume is not None
+                else float(str(config.settings["volume"])),
+                "intonationScale": float(str(config.settings["intonation"])),
+                "pauseLengthScale": float(str(config.settings["pause_length"])),
+                "prePhonemeLength": float(str(config.settings["pre_phoneme_length"])),
+                "postPhonemeLength": float(str(config.settings["post_phoneme_length"])),
             }
         )
         response = requests.post(

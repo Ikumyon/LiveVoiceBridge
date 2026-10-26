@@ -9,12 +9,12 @@ from livevoicebridge.core.speech.budget import AudioBudget
 from livevoicebridge.core.speech.models import (
     AudioData,
     DictionaryCommand,
+    EngineCapabilities,
     EngineConfig,
     SoundEffect,
     SpeechPlan,
     SpeechProgress,
     Utterance,
-    capabilities,
 )
 from livevoicebridge.core.speech.ports import (
     AudioOutput,
@@ -46,11 +46,15 @@ class SpeechPipeline:
         limit: int = 100,
         audio_mib: int = 32,
         ready: Callable[[Event], object] | None = None,
+        capabilities: EngineCapabilities | None = None,
     ):
         self.session = session
         self.revision = revision
         self._config = config
         self._engine = engine
+        if capabilities is None:
+            raise ValueError("登録されたTTSの対応機能を指定してください。")
+        self._capabilities = capabilities
         self._ready = ready
         self._processor = processor
         self._dictionary = dictionary
@@ -129,7 +133,7 @@ class SpeechPipeline:
                 self._input.qsize(),
                 current,
                 self._rejected,
-                not capabilities(self._config.kind).local_audio,
+                not self._capabilities.local_audio,
             )
         )
 
@@ -144,7 +148,7 @@ class SpeechPipeline:
         return False
 
     def _supported(self, utterance: Utterance) -> Utterance:
-        supported = capabilities(self._config.kind).controls
+        supported = self._capabilities.controls
         ignored = {
             item.name: None
             for item in fields(utterance.controls)
@@ -183,7 +187,11 @@ class SpeechPipeline:
                             text = self._processor.prepare(utterance.text, self._dictionary.snapshot())
                             if not text.strip():
                                 continue
-                            if capabilities(self._config.kind).local_audio:
+                            if self._ready is not None:
+                                self._ready(self._cancelled)
+                            if self._cancelled.is_set():
+                                break
+                            if self._capabilities.local_audio:
                                 assert hasattr(self._engine, "synthesize")
                                 reserved = self._budget.reserve()
                                 if not reserved:

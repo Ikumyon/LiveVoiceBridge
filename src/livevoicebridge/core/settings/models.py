@@ -4,7 +4,7 @@ from livevoicebridge.core.chat.models import StreamingConfig
 from livevoicebridge.core.dictionary.models import DictionaryConfig
 from livevoicebridge.core.speech.models import SpeechConfig
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +42,7 @@ class PresentationConfig:
 class ApplicationConfig:
     check_updates: bool = True
     use_ime: bool = False
+    plugin_enabled: tuple[tuple[str, bool], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0"><class>PluginSettingRow</class>
+ <widget class="QWidget" name="PluginSettingRow">
+  <layout class="QHBoxLayout" name="rowLayout">
+   <item><widget class="QLabel" name="titleLabel"/></item>
+   <item><widget class="QStackedWidget" name="valueStack">
+    <widget class="QWidget" name="textPage"><layout class="QHBoxLayout" name="textLayout">
+     <item><widget class="QLineEdit" name="textValue"/></item>
+     <item><widget class="QPushButton" name="browseButton"><property name="text"><string>参照…</string></property></widget></item>
+    </layout></widget>
+    <widget class="QWidget" name="numberPage"><layout class="QHBoxLayout" name="numberLayout"><item><widget class="QDoubleSpinBox" name="numberValue"><property name="decimals"><number>4</number></property></widget></item></layout></widget>
+    <widget class="QWidget" name="integerPage"><layout class="QHBoxLayout" name="integerLayout"><item><widget class="QSpinBox" name="integerValue"/></item></layout></widget>
+    <widget class="QWidget" name="choicePage"><layout class="QHBoxLayout" name="choiceLayout"><item><widget class="QComboBox" name="choiceValue"/></item></layout></widget>
+    <widget class="QWidget" name="boolPage"><layout class="QHBoxLayout" name="boolLayout"><item><widget class="QCheckBox" name="boolValue"/></item></layout></widget>
+   </widget></item>
+  </layout>
+ </widget><resources/><connections/>
+</ui>

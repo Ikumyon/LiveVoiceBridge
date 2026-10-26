@@ -15,9 +15,9 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from livevoicebridge import _native
-from livevoicebridge.core.speech.qwen import QwenState
 from livevoicebridge.integrations.qwen.assets import MODEL_ID, MODEL_REVISION, RUNTIMES
 from livevoicebridge.integrations.qwen.models import validate_model
+from livevoicebridge.plugins.builtin.qwen3.contracts import QwenState
 
 
 class Cancelled(Exception):

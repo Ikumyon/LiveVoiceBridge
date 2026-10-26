@@ -16,6 +16,13 @@ class NativePcmBuffer:
         return self.clip.byte_length
 
 
+def decode_wav(wav: bytes, controls: SpeechControls, max_bytes: int) -> AudioData:
+    if len(wav) > max_bytes + 65536:
+        raise ValueError("合成音声が容量上限を超えました。")
+    clip = _native.AudioClip.from_wav(wav, max_bytes, controls.echo, controls.yamabiko, controls.panning)
+    return AudioData(NativePcmBuffer(clip))
+
+
 def decode_response(response: requests.Response, controls: SpeechControls, max_bytes: int) -> AudioData:
     limit = max_bytes + 65536
     try:

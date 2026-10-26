@@ -1,0 +1,21 @@
+{
+  "id": "example_executable_http",
+  "name": "外部HTTP WAV 作成例",
+  "version": "1.0.0",
+  "api_version": 1,
+  "platforms": [
+    "windows",
+    "linux"
+  ],
+  "kind": "executable",
+  "executables": {
+    "windows": {
+      "path": "bin/tts_plugin.exe",
+      "args": []
+    },
+    "linux": {
+      "path": "bin/tts_plugin",
+      "args": []
+    }
+  }
+}

@@ -23,7 +23,7 @@ manifest-path = "native/Cargo.toml"
 python-source = "src"
 module-name = "livevoicebridge._native"
 features = ["extension-module"]
-include = ["src/livevoicebridge/desktop/resources/**/*", "src/livevoicebridge/integrations/qwen/resources/**/*"]
+include = ["src/livevoicebridge/desktop/resources/**/*", "src/livevoicebridge/integrations/qwen/resources/**/*", "src/livevoicebridge/plugins/builtin/**/*"]
 
 [tool.ruff]
 target-version = "py314"

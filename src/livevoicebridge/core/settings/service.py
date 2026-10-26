@@ -1,12 +1,11 @@
 import math
-from dataclasses import asdict, fields, is_dataclass
+from dataclasses import fields, is_dataclass
 from threading import RLock
 from types import UnionType
 from typing import TypeAliasType, get_args, get_origin, get_type_hints
 
 from livevoicebridge.core.settings.models import SCHEMA_VERSION, AppConfig
 from livevoicebridge.core.settings.ports import ConfigRepository
-from livevoicebridge.core.speech.models import BouyomiConfig, Qwen3Config, TtsEngineKind
 
 
 def validate(config: AppConfig) -> None:
@@ -22,32 +21,23 @@ def validate(config: AppConfig) -> None:
     ):
         if not minimum <= value <= maximum or value % step:
             raise ValueError("リソース上限の範囲または刻みが不正です。")
-    kinds = [engine.kind for engine in config.speech.engines]
-    if len(kinds) != len(set(kinds)) or set(kinds) != set(TtsEngineKind):
-        raise ValueError("対応する全エンジンの設定を重複なく指定してください。")
+    identifiers = [engine.engine_id for engine in config.speech.engines]
+    if len(identifiers) != len(set(identifiers)) or any(not key for key in identifiers):
+        raise ValueError("エンジンIDが空または重複しています。")
     config.speech.engine()
+    plugin_ids = [identifier for identifier, _enabled in config.application.plugin_enabled]
+    if len(plugin_ids) != len(set(plugin_ids)) or any(not identifier for identifier in plugin_ids):
+        raise ValueError("プラグイン有効状態のIDが空または重複しています。")
     if not config.speech.read_blocks or not 1 <= config.speech.queue_limit <= 10000:
         raise ValueError("読み上げブロックとキュー上限が不正です。")
     for engine in config.speech.engines:
         if engine.max_length == 0 or engine.max_length < -1:
-            raise ValueError("接続先または最大文字数が不正です。")
-        if isinstance(engine, Qwen3Config):
-            if engine.device not in {"GPU", "CPU"}:
-                raise ValueError("Qwen3のデバイスはGPUまたはCPUを指定してください。")
-        elif not engine.url:
-            raise ValueError("接続先を指定してください。")
-        for value in asdict(engine).values():
-            if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("最大文字数が不正です。")
+        if not engine.speaker_id:
+            raise ValueError("話者IDを指定してください。")
+        for parameter in engine.settings.values():
+            if isinstance(parameter, float) and not math.isfinite(parameter):
                 raise ValueError("音声パラメータは有限値で指定してください。")
-        if engine.speaker_id < 0:
-            raise ValueError("話者IDが不正です。")
-        if isinstance(engine, BouyomiConfig):
-            if not all(-1 <= value <= 32767 for value in (engine.speed, engine.pitch, engine.volume)):
-                raise ValueError("棒読みちゃんの数値指定が範囲外です。")
-        elif engine.volume < 0:
-            raise ValueError("音量は0以上で指定してください。")
-        if isinstance(engine, Qwen3Config) and (engine.speaker_id > 8 or engine.volume > 2):
-            raise ValueError("Qwen3の話者または音量が範囲外です。")
     view = config.presentation
     if not all(0 <= value <= 1 for value in (view.comment_opacity, view.header_opacity, view.border_opacity)):
         raise ValueError("不透明度が範囲外です。")
@@ -70,6 +60,14 @@ def _validate_type(value, expected, location: str) -> None:
             except ValueError:
                 continue
         raise ValueError(f"{location} の型が不正です。")
+    if origin is dict:
+        if not isinstance(value, dict):
+            raise ValueError(f"{location} はオブジェクトで指定してください。")
+        key_type, value_type = get_args(expected)
+        for key, item in value.items():
+            _validate_type(key, key_type, location)
+            _validate_type(item, value_type, location)
+        return
     if origin is tuple:
         if not isinstance(value, tuple):
             raise ValueError(f"{location} は配列で指定してください。")

@@ -1,0 +1,11 @@
+{
+  "id": "bouyomichan",
+  "name": "棒読みちゃん",
+  "version": "1.0.0",
+  "api_version": 1,
+  "platforms": [
+    "windows"
+  ],
+  "kind": "python",
+  "entry": "entry.py"
+}

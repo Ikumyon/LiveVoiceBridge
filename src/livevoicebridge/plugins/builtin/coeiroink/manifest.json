@@ -1,0 +1,12 @@
+{
+  "id": "coeiroink",
+  "name": "COEIROINK",
+  "version": "1.0.0",
+  "api_version": 1,
+  "platforms": [
+    "windows",
+    "linux"
+  ],
+  "kind": "python",
+  "entry": "entry.py"
+}

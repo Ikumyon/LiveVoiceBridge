@@ -37,10 +37,10 @@ jobs:
           subprocess.check_call([sys.executable,'-m','pip','install','--upgrade','--upgrade-strategy','eager',*p['dependencies'],*p['optional-dependencies']['dev']])"
       - name: Python lint and formatting
         run: |
-          ruff check src services/qwen3/src tools
-          ruff format --check src services/qwen3/src tools
+          ruff check src services/qwen3/src tools examples/plugins
+          ruff format --check src services/qwen3/src tools examples/plugins
       - name: Python type check
-        run: mypy src/livevoicebridge services/qwen3/src tools
+        run: mypy src/livevoicebridge services/qwen3/src tools examples/plugins
       - name: Update Rust dependencies
         run: cargo update --manifest-path native/Cargo.toml
       - name: Rust type check

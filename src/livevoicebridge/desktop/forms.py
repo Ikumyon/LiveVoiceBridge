@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from pathlib import Path
 from typing import cast
 
 from PySide6.QtCore import QFile
@@ -34,6 +35,10 @@ class _FormLoader(QUiLoader):
 
 def load_form(name: str, root: QWidget | None = None, widgets: tuple[type[QWidget], ...] = ()) -> QWidget:
     path = UI_DIR / f"{name}.ui"
+    return load_ui_file(path, root, widgets)
+
+
+def load_ui_file(path: Path, root: QWidget | None = None, widgets: tuple[type[QWidget], ...] = ()) -> QWidget:
     source = QFile(str(path))
     if not source.open(QFile.OpenModeFlag.ReadOnly):
         raise RuntimeError(f"UIファイルを開けません: {path}")

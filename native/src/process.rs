@@ -43,6 +43,7 @@ impl ManagedProcess {
                 cwd.as_deref(),
                 &env.unwrap_or_default(),
                 log.as_deref(),
+                false,
             )?);
             Ok(())
         })

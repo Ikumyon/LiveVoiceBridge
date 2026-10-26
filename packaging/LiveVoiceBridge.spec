@@ -28,6 +28,7 @@ a = Analysis(
          "livevoicebridge/integrations/qwen/resources/service/src/lvb_qwen3_service"),
     ],
     hiddenimports=collect_submodules("grpc") + collect_submodules("google.protobuf")
+    + collect_submodules("livevoicebridge.plugins.builtin")
     + ["livevoicebridge._native", "livevoicebridge.integrations.youtube.generated.stream_list_pb2_grpc"],
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], noarchive=False, optimize=0,
 )

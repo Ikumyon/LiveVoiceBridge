@@ -5,34 +5,36 @@ from dataclasses import replace
 
 from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QLineEdit, QToolButton
+from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QLineEdit, QMessageBox, QToolButton
 
 from livevoicebridge.core.settings.models import AppConfig
 from livevoicebridge.desktop.dictionary.view import DictionaryView
 from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.rendering.icons import load_svg_icon
 from livevoicebridge.desktop.resources import EXTERNAL_LINK_ICON_FILE
-from livevoicebridge.desktop.settings.engines import EngineEditor
+from livevoicebridge.desktop.settings.engines import EngineEditor, PluginEditor
 from livevoicebridge.desktop.settings.presentation import PresentationEditor
 from livevoicebridge.desktop.settings.read_blocks import PlaceholderFrame, ReadBlockEditor
 from livevoicebridge.desktop.settings.resources import ResourceEditor
+from livevoicebridge.plugins.manager import PluginManager
 
 
 class SettingsDialog(QObject):
     settings_changed = Signal()
     save_requested = Signal()
 
-    def __init__(self, config: AppConfig, catalog: list, executable_filter: str):
+    def __init__(self, config: AppConfig, catalog: list, executable_filter: str, plugins: PluginManager):
         super().__init__()
         self.config = config
         self.dialog_window = load_form("settings_dialog", widgets=(PlaceholderFrame,))
         window = self.dialog_window
-        self.engines = EngineEditor(window, config.speech, executable_filter)
+        self.engines = EngineEditor(window, config.speech, executable_filter, plugins)
+        self.plugins = PluginEditor(window, plugins, config.application.plugin_enabled)
         self.read_blocks = ReadBlockEditor(window, config.speech.read_blocks)
         self.dictionary = DictionaryView(window, config.dictionary)
         self.presentation = PresentationEditor(window, config.presentation, catalog)
         self.resources = ResourceEditor(window, config.resources)
-        for component in (self.engines, self.read_blocks, self.presentation, self.resources):
+        for component in (self.engines, self.plugins, self.read_blocks, self.presentation, self.resources):
             component.changed.connect(self.settings_changed.emit)
         self.dictionary.settings_changed.connect(self.settings_changed.emit)
         self.api_key_line = window.findChild(QLineEdit, "apiKeyLineEdit")
@@ -60,6 +62,11 @@ class SettingsDialog(QObject):
 
     def _accept(self) -> None:
         current = self.config
+        try:
+            speech = replace(self.engines.read(), read_blocks=self.read_blocks.read())
+        except Exception as exc:
+            QMessageBox.warning(self.dialog_window, "TTS設定", str(exc))
+            return
         self.config = replace(
             current,
             streaming=replace(
@@ -68,10 +75,12 @@ class SettingsDialog(QObject):
                 skip_history=self.skip_history.isChecked(),
                 read_paid_events=self.read_paid_events.isChecked(),
             ),
-            speech=replace(self.engines.read(), read_blocks=self.read_blocks.read()),
+            speech=speech,
             presentation=self.presentation.read(),
             dictionary=self.dictionary.read(),
             resources=self.resources.read(),
-            application=replace(current.application, check_updates=self.check_updates.isChecked()),
+            application=replace(
+                current.application, check_updates=self.check_updates.isChecked(), plugin_enabled=self.plugins.read()
+            ),
         )
         self.save_requested.emit()

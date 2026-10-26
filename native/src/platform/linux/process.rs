@@ -2,6 +2,9 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 pub struct Child {
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
+    pub stdout: Option<Box<dyn std::io::Read + Send>>,
+    pub stderr: Option<Box<dyn std::io::Read + Send>>,
     child: std::process::Child,
     group: Option<i32>,
 }
@@ -12,13 +15,19 @@ impl Child {
         cwd: Option<&str>,
         env: &std::collections::HashMap<String, String>,
         log: Option<&str>,
+        pipes: bool,
     ) -> Result<Self, String> {
         let mut command = Command::new(path);
         command.args(args).envs(env).process_group(0);
         if let Some(directory) = cwd {
             command.current_dir(directory);
         }
-        if let Some(log) = log {
+        if pipes {
+            command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+        } else if let Some(log) = log {
             let file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -30,12 +39,24 @@ impl Child {
         } else {
             command.stdout(Stdio::null()).stderr(Stdio::null());
         }
-        let child = command
-            .stdin(Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        if !pipes {
+            command.stdin(Stdio::null());
+        }
+        let mut child = command.spawn().map_err(|e| e.to_string())?;
         let group = child.id() as i32;
         Ok(Self {
+            stdin: child
+                .stdin
+                .take()
+                .map(|s| Box::new(s) as Box<dyn std::io::Write + Send>),
+            stdout: child
+                .stdout
+                .take()
+                .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+            stderr: child
+                .stderr
+                .take()
+                .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
             child,
             group: Some(group),
         })

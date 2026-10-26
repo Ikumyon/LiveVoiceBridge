@@ -21,7 +21,7 @@ class NativeTextProcessor:
                 items.append(SoundEffect(str(segment.word)))
                 continue
             controls = SpeechControls(
-                speaker_id=segment.speaker_id,
+                speaker_id=str(segment.speaker_id) if segment.speaker_id is not None else None,
                 speed=segment.speed,
                 pitch=segment.pitch,
                 volume=segment.volume,

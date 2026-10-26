@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from queue import Empty, Queue
 from threading import BoundedSemaphore, Event, Lock, Thread
+from typing import TYPE_CHECKING
 
 from livevoicebridge.core.chat.models import CommentEvent
 from livevoicebridge.core.chat.planning import plan_comment
@@ -23,7 +24,7 @@ from livevoicebridge.core.session.models import (
 )
 from livevoicebridge.core.settings.models import AppConfig, PresentationConfig
 from livevoicebridge.core.settings.service import SettingsService, validate
-from livevoicebridge.core.speech.models import EngineConfig, Qwen3Config, Speaker, SpeechProgress, TtsEngineKind
+from livevoicebridge.core.speech.models import EngineConfig, EngineState, Speaker, SpeechProgress
 from livevoicebridge.core.speech.pipeline import SpeechPipeline
 from livevoicebridge.core.speech.ports import (
     AudioOutput,
@@ -32,10 +33,12 @@ from livevoicebridge.core.speech.ports import (
     ExternalSpeechOutput,
     TextProcessor,
 )
-from livevoicebridge.core.speech.qwen import QwenRuntime, QwenState
 from livevoicebridge.core.telemetry.models import ApplicationIssue, ErrorKind
 from livevoicebridge.core.telemetry.ports import MetricsProvider, UpdateProvider
 from livevoicebridge.core.telemetry.store import MetricsStore
+
+if TYPE_CHECKING:
+    from livevoicebridge.plugins.manager import PluginManager
 
 
 class SessionService:
@@ -51,7 +54,7 @@ class SessionService:
         updates: UpdateProvider,
         publish: Callable[[ApplicationEvent], None],
         avatar_loader: Callable[[str], bytes],
-        qwen: QwenRuntime | None = None,
+        plugins: PluginManager,
     ):
         self.settings = settings
         self.dictionary = dictionary
@@ -64,7 +67,8 @@ class SessionService:
         self._updates = updates
         self._publish = publish
         self._avatar_loader = avatar_loader
-        self.qwen = qwen
+        self.plugins = plugins
+        self._settings_baseline: AppConfig | None = None
         self._auxiliary = ThreadPoolExecutor(max_workers=2, thread_name_prefix="desktop-data")
         self._media = ThreadPoolExecutor(max_workers=2, thread_name_prefix="avatars")
         self._avatar_slots = BoundedSemaphore(64)
@@ -85,53 +89,37 @@ class SessionService:
         self._control.start()
         self._monitor.start()
 
-    def initialize_qwen(self) -> None:
-        if self.qwen is not None:
-            config = self.settings.current.speech.engine()
-            self.qwen.configure(config if isinstance(config, Qwen3Config) else None)
+    def initialize_plugins(self) -> None:
+        self.plugins.configure(self.settings.current.speech.engine())
 
-    def qwen_prepared(self, model: str, device: str, generation: int) -> None:
-        def apply() -> None:
-            if self.qwen is None or self.qwen.state.generation != generation:
-                return
-            config = self.settings.current
-            engines = tuple(
-                replace(engine, model_path=model, device=device) if isinstance(engine, Qwen3Config) else engine
-                for engine in config.speech.engines
-            )
-            self._apply(replace(config, speech=replace(config.speech, engines=engines)), None)
+    def engine_changed(self, state: EngineState) -> None:
+        self._post(lambda: self._engine_changed(state))
 
-        self._post(apply)
-
-    def qwen_changed(self, state: QwenState) -> None:
-        self._post(lambda: self._qwen_changed(state))
-
-    def restart_qwen(self) -> None:
-        def restart() -> None:
-            if self.qwen is None:
-                return
-            if self._pipeline is not None and self.settings.current.speech.active_engine is TtsEngineKind.QWEN3:
-                self._pipeline.cancel()
-            self.qwen.restart()
-
-        self._post(restart)
-
-    def _qwen_changed(self, state: QwenState) -> None:
-        if self.qwen is None or state.generation != self.qwen.state.generation:
+    def _engine_changed(self, state: EngineState) -> None:
+        if self.plugins.states.get(state.engine_id) != state:
             return
-        if self.settings.current.speech.active_engine is not TtsEngineKind.QWEN3:
+        if self.settings.current.speech.active_engine != state.engine_id:
             return
-        if state.phase == "error" and self._pipeline is not None:
-            self._pipeline.cancel()
-        elif state.busy and self._pipeline is not None:
+        if (state.busy or state.phase == "error") and self._pipeline is not None:
             self._pipeline.cancel()
         elif state.phase == "ready" and self._pipeline is not None and not self._pipeline.accepting:
             self._pipeline.join()
             self._pipeline = None
             if self._engine is not None:
                 self._engine.close()
+                self._engine = None
             if self._prepare(self._session):
                 self._set_state(RuntimeState.RUNNING)
+
+    def save_plugin_config(self, identifier: str, values: dict) -> None:
+        config = self.settings.current
+        engines = tuple(
+            replace(engine, settings={**engine.settings, **values}) if engine.engine_id == identifier else engine
+            for engine in config.speech.engines
+        )
+        error = self._apply(replace(config, speech=replace(config.speech, engines=engines)), None)
+        if error:
+            self._issue(error)
 
     @property
     def state(self) -> RuntimeState:
@@ -212,8 +200,7 @@ class SessionService:
         self._session = token
         config = self.settings.current
         self._engine = self._engine_factory(config.speech.engine())
-        if not isinstance(config.speech.engine(), Qwen3Config):
-            self._engine.ensure_ready()
+        self._engine.ensure_ready()
         if not self._current(token):
             self._dispose()
             self._set_state(RuntimeState.IDLE)
@@ -230,7 +217,8 @@ class SessionService:
             self._issue,
             config.speech.queue_limit,
             config.resources.audio_mib,
-            self.qwen.wait_ready if isinstance(config.speech.engine(), Qwen3Config) and self.qwen else None,
+            lambda cancelled: self.plugins.wait_ready(config.speech.active_engine, cancelled),
+            self.plugins.require(config.speech.active_engine).capabilities,
         )
         self._pipeline.start()
         return True
@@ -324,30 +312,36 @@ class SessionService:
         if errors:
             raise RuntimeError(" / ".join(errors))
 
+    def begin_settings(self) -> None:
+        self._settings_baseline = self.settings.current
+
     def apply_settings(
         self,
         config: AppConfig,
         dictionary_draft: int | None = None,
-        qwen_base: Qwen3Config | None = None,
         complete: Callable[[str], None] | None = None,
     ) -> None:
         def apply() -> None:
             draft = config
-            # Provisioning saves independently of the settings draft. Merge on the
-            # serialized command lane so an immediately closed dialog cannot undo it.
-            latest = self.settings.current.speech.engine(TtsEngineKind.QWEN3)
-            if qwen_base is not None and isinstance(latest, Qwen3Config):
-                engines = tuple(
-                    replace(
-                        engine,
-                        model_path=latest.model_path,
-                        device=latest.device if engine.device == qwen_base.device else engine.device,
+            # Preserve plugin settings saved asynchronously after the dialog opened.
+            baseline = self.settings.current
+            if self._settings_baseline is not None:
+                merged = []
+                for engine in draft.speech.engines:
+                    before = next(
+                        (item for item in self._settings_baseline.speech.engines if item.engine_id == engine.engine_id),
+                        None,
                     )
-                    if isinstance(engine, Qwen3Config)
-                    else engine
-                    for engine in draft.speech.engines
-                )
-                draft = replace(draft, speech=replace(draft.speech, engines=engines))
+                    latest = next(
+                        (item for item in baseline.speech.engines if item.engine_id == engine.engine_id), None
+                    )
+                    values = dict(engine.settings)
+                    if before is not None and latest is not None:
+                        for key, value in latest.settings.items():
+                            if before.settings.get(key) != value and values.get(key) == before.settings.get(key):
+                                values[key] = value
+                    merged.append(replace(engine, settings=values))
+                draft = replace(draft, speech=replace(draft.speech, engines=tuple(merged)))
             try:
                 error = self._apply(draft, dictionary_draft)
             except Exception as exc:
@@ -381,7 +375,7 @@ class SessionService:
 
     def _apply_runtime(self, previous: AppConfig, config: AppConfig) -> None:
         self._publish(SettingsApplied(config, self.settings.revision))
-        self.initialize_qwen()
+        self.initialize_plugins()
         if self._pipeline is not None:
             self._pipeline.set_audio_limit(config.resources.audio_mib)
         speech_changed = (
@@ -438,6 +432,7 @@ class SessionService:
         engine = None
         try:
             engine = self._engine_factory(config)
+            engine.ensure_ready()
             complete(engine.speakers(), "")
         except Exception as exc:
             complete((), str(exc))
@@ -491,13 +486,14 @@ class SessionService:
 
     def _shutdown_resources(self) -> None:
         try:
-            for close in (*([self.qwen.close] if self.qwen else []), self._dispose, self._audio.close):
+            for close in (self._dispose, self._audio.close):
                 try:
                     close()
                 except Exception as exc:
                     self._issue(str(exc))
             self._auxiliary.shutdown(wait=True, cancel_futures=True)
             self._media.shutdown(wait=True, cancel_futures=True)
+            self.plugins.close()
             self.dictionary.close()
             self._monitor.join()
             self._metrics.close()

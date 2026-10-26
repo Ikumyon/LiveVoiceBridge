@@ -74,9 +74,9 @@ def speaker_sort_key(name: str) -> str:
 
 
 def group_speakers_by_kana(
-    speakers_data: dict[str, list[tuple[str, int]]],
-) -> dict[str, dict[str, list[tuple[str, int]]]]:
-    grouped_speakers: dict[str, dict[str, list[tuple[str, int]]]] = {
+    speakers_data: dict[str, list[tuple[str, str]]],
+) -> dict[str, dict[str, list[tuple[str, str]]]]:
+    grouped_speakers: dict[str, dict[str, list[tuple[str, str]]]] = {
         group_name: {} for group_name in SPEAKER_GROUP_ORDER
     }
     for speaker_name, styles in speakers_data.items():
@@ -95,8 +95,8 @@ class SpeakerMenu(QObject):
         super().__init__(window)
         self.dialog_window = window
         self.speaker_button = window.findChild(QPushButton, "speakerButton")
-        self.speakers_data: dict[str, list[tuple[str, int]]] = {}
-        self.current_speaker_id = 0
+        self.speakers_data: dict[str, list[tuple[str, str]]] = {}
+        self.current_speaker_id = "0"
         self.speaker_menu = QMenu(window)
         self.speaker_button.setMenu(self.speaker_menu)
         self.speaker_menu.aboutToShow.connect(self.requested.emit)
@@ -108,7 +108,7 @@ class SpeakerMenu(QObject):
         self.rebuild_speaker_menu()
         self.set_speaker_button_id(self.current_speaker_id)
 
-    def select_engine(self, identifier: int) -> None:
+    def select_engine(self, identifier: str) -> None:
         self.speakers_data = {}
         self.rebuild_speaker_menu()
         self.set_speaker_button_id(identifier)
@@ -141,12 +141,12 @@ class SpeakerMenu(QObject):
                     )
                     char_menu.addAction(action)
 
-    def on_style_selected(self, speaker_name: str, style_name: str, speaker_id: int) -> None:
+    def on_style_selected(self, speaker_name: str, style_name: str, speaker_id: str) -> None:
         self.current_speaker_id = speaker_id
         self.speaker_button.setText(f"{speaker_name} ({style_name})")
         self.changed.emit()
 
-    def set_speaker_button_id(self, speaker_id: int) -> None:
+    def set_speaker_button_id(self, speaker_id: str) -> None:
         self.current_speaker_id = speaker_id
         found = False
         for speaker_name, styles in self.speakers_data.items():

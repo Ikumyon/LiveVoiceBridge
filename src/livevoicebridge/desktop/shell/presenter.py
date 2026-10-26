@@ -30,7 +30,6 @@ from livevoicebridge.core.session.models import (
 )
 from livevoicebridge.core.session.service import SessionService
 from livevoicebridge.core.settings.models import ResourceLimits
-from livevoicebridge.core.speech.qwen import QwenState
 from livevoicebridge.core.telemetry.models import ApplicationIssue, MetricFrame
 from livevoicebridge.desktop.comments.avatars import AvatarCache
 from livevoicebridge.desktop.comments.delegate import CommentDelegate
@@ -72,7 +71,6 @@ class ShellPresenter(QObject):
         self.events = events
         self._executable_filter = executable_filter
         self._closed = False
-        self._qwen_phase = ""
         self.comment_window: CommentWindow | None = None
         self.settings_dialog: SettingsDialog | None = None
         self._comment_tab_layout = None
@@ -130,17 +128,15 @@ class ShellPresenter(QObject):
             self.task_manager_widget.update_connection_info(
                 event.connected,
                 int(event.state is RuntimeState.RUNNING),
-                self.config.speech.active_engine.value,
+                self.config.speech.active_engine,
                 self._socket_count,
             )
-        elif isinstance(event, QwenState):
-            if event.phase != self._qwen_phase:
-                self._qwen_phase = event.phase
-                self.append_log(f"[Qwen] {event.message}")
         elif isinstance(event, MetricsCollected):
             self._refresh_metrics()
         elif isinstance(event, SettingsApplied):
             self._apply_resources(event.config.resources)
+            if self.settings_dialog is not None:
+                self.settings_dialog.engines.apply_saved(event.config.speech)
             self.url_line.setText(event.config.streaming.youtube_source)
             self._preview_presentation(event.config.presentation)
         elif isinstance(event, ApplicationIssue):
@@ -231,7 +227,7 @@ class ShellPresenter(QObject):
             self.task_manager_widget.update_connection_info(
                 bool(self.latest_youtube_connection_count),
                 int(self.session.state is RuntimeState.RUNNING),
-                self.config.speech.active_engine.value,
+                self.config.speech.active_engine,
                 self._socket_count,
             )
         catalog = [{"id": frame.identifier, "title": frame.title} for frame in frames]
@@ -251,7 +247,8 @@ class ShellPresenter(QObject):
         if self.settings_dialog is not None:
             self.settings_dialog.dialog_window.raise_()
             return
-        dialog = SettingsDialog(self.config, self.metric_catalog, self._executable_filter)
+        self.session.begin_settings()
+        dialog = SettingsDialog(self.config, self.metric_catalog, self._executable_filter, self.session.plugins)
         SettingsPresenter(dialog, self.session)
         self.settings_dialog = dialog
         dialog.settings_changed.connect(lambda: self._preview_dialog(dialog))

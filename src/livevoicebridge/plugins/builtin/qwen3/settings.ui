@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0"><class>QwenSettings</class>
+ <widget class="QWidget" name="QwenSettings">
+  <layout class="QVBoxLayout" name="qwenLayout">
+   <item><widget class="QLabel" name="qwenInfo"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Qwen3-TTS 0.6B CustomVoice / 日本語。モデルの準備結果は自動保存されます。</string></property></widget></item>
+   <item><widget class="QLabel" name="stateLabel"><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><layout class="QHBoxLayout" name="actions">
+    <item><widget class="QPushButton" name="setupButton"><property name="text"><string>モデルの準備</string></property></widget></item>
+    <item><widget class="QPushButton" name="restartButton"><property name="text"><string>再試行・再起動</string></property></widget></item>
+    <item><widget class="QPushButton" name="logButton"><property name="text"><string>詳細ログ</string></property><property name="checkable"><bool>true</bool></property></widget></item>
+   </layout></item>
+   <item><widget class="QPlainTextEdit" name="logText"><property name="visible"><bool>false</bool></property><property name="readOnly"><bool>true</bool></property><property name="maximumBlockCount"><number>1000</number></property></widget></item>
+  </layout>
+ </widget><resources/><connections/>
+</ui>

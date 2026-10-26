@@ -1,12 +1,20 @@
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     CloseHandle, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
+use windows::Win32::Security::SECURITY_ATTRIBUTES;
 use windows::Win32::System::JobObjects::*;
+use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::*;
 
+// Keep inheritable child pipe ends private to one host spawn at a time.
+static SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct Child {
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
+    pub stdout: Option<Box<dyn std::io::Read + Send>>,
+    pub stderr: Option<Box<dyn std::io::Read + Send>>,
     process: isize,
     job: isize,
 }
@@ -17,7 +25,9 @@ impl Child {
         cwd: Option<&str>,
         env: &std::collections::HashMap<String, String>,
         log: Option<&str>,
+        pipes: bool,
     ) -> Result<Self, String> {
+        let _spawn_guard = SPAWN_LOCK.lock().map_err(|error| error.to_string())?;
         let log_file = log
             .map(|p| {
                 std::fs::OpenOptions::new()
@@ -27,6 +37,11 @@ impl Child {
             })
             .transpose()
             .map_err(|e| e.to_string())?;
+        let channels = if pipes {
+            Some((pipe(true)?, pipe(false)?, pipe(false)?))
+        } else {
+            None
+        };
         unsafe {
             let job = CreateJobObjectW(None, PCWSTR::null()).map_err(|e| e.to_string())?;
             let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -79,13 +94,19 @@ impl Child {
                 startup.hStdOutput = handle;
                 startup.hStdError = handle;
             }
+            if let Some((input, output, error)) = &channels {
+                startup.dwFlags = STARTF_USESTDHANDLES;
+                startup.hStdInput = HANDLE(input.1.as_raw_handle());
+                startup.hStdOutput = HANDLE(output.1.as_raw_handle());
+                startup.hStdError = HANDLE(error.1.as_raw_handle());
+            }
             let mut info = PROCESS_INFORMATION::default();
             if let Err(error) = CreateProcessW(
                 PCWSTR(executable.as_ptr()),
                 Some(PWSTR(command.as_mut_ptr())),
                 None,
                 None,
-                log_file.is_some(),
+                log_file.is_some() || pipes,
                 CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
                 Some(environment_block.as_ptr() as _),
                 directory
@@ -113,7 +134,19 @@ impl Child {
                 let _ = CloseHandle(job);
                 return Err("音声エンジンを開始できません。".into());
             }
+            let (stdin, stdout, stderr) = if let Some((input, output, error)) = channels {
+                (
+                    Some(Box::new(input.0) as Box<dyn std::io::Write + Send>),
+                    Some(Box::new(output.0) as Box<dyn std::io::Read + Send>),
+                    Some(Box::new(error.0) as Box<dyn std::io::Read + Send>),
+                )
+            } else {
+                (None, None, None)
+            };
             Ok(Self {
+                stdin,
+                stdout,
+                stderr,
                 process: info.hProcess.0 as isize,
                 job: job.0 as isize,
             })
@@ -173,5 +206,32 @@ impl Drop for Child {
             let _ = CloseHandle(HANDLE(self.job as _));
             let _ = CloseHandle(HANDLE(self.process as _));
         }
+    }
+}
+
+fn pipe(input: bool) -> Result<(std::fs::File, std::fs::File), String> {
+    unsafe {
+        let mut read = HANDLE::default();
+        let mut write = HANDLE::default();
+        let security = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            bInheritHandle: true.into(),
+            ..Default::default()
+        };
+        CreatePipe(&mut read, &mut write, Some(&security), 0).map_err(|e| e.to_string())?;
+        let reader = std::fs::File::from_raw_handle(read.0);
+        let writer = std::fs::File::from_raw_handle(write.0);
+        let parent = if input { &writer } else { &reader };
+        SetHandleInformation(
+            HANDLE(parent.as_raw_handle()),
+            HANDLE_FLAG_INHERIT.0,
+            Default::default(),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(if input {
+            (writer, reader)
+        } else {
+            (reader, writer)
+        })
     }
 }

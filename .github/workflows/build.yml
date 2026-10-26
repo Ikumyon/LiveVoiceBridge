@@ -4,7 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -42,8 +43,36 @@ jobs:
       - name: Build and inspect distribution
         run: python tools/build.py ci
       - uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'release'
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
           if-no-files-found: error
+
+  attach-release:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Download distribution files
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --name LiveVoiceBridge-Windows-x64.zip --dir assets
+          gh run download "$GITHUB_RUN_ID" --name LiveVoiceBridge-Linux-x64.tar.gz --dir assets
+          test -s assets/LiveVoiceBridge-Windows-x64.zip
+          test -s assets/LiveVoiceBridge-Linux-x64.tar.gz
+      - name: Attach distribution files to published release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            assets/LiveVoiceBridge-Windows-x64.zip \
+            assets/LiveVoiceBridge-Linux-x64.tar.gz

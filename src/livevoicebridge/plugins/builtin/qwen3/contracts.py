@@ -1,10 +1,14 @@
-"""Application-owned Qwen lifecycle contracts, independent of Qt and OS APIs."""
+"""Qwen-specific implementation contracts."""
 
 from dataclasses import dataclass
 from threading import Event
 from typing import Protocol
 
-from livevoicebridge.core.speech.models import Qwen3Config
+
+@dataclass(frozen=True, slots=True)
+class QwenConfig:
+    model_path: str = ""
+    device: str = "GPU"
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +24,7 @@ class QwenState:
 class QwenRuntime(Protocol):
     @property
     def state(self) -> QwenState: ...
-    def configure(self, config: Qwen3Config | None) -> None: ...
+    def configure(self, config: QwenConfig | None) -> None: ...
     def prepare(self, source: str, device: str) -> None: ...
     def cancel_preparation(self) -> None: ...
     def restart(self) -> None: ...
