@@ -161,6 +161,9 @@ PyInstallerは `packaging/LiveVoiceBridge.spec` を使い、
 QwenのOS別JSON・サービスソース・pyprojectを同梱します。
 `.ui`・QtUiTools・開発用変換ツールは配布物へ同梱しません。
 生成PythonはPyInstallerの通常モジュールとして格納し、平文ファイルとしての配置は不要です。
+UI変換は対象Python環境のPySide6 Essentialsに含まれる `uic` 本体を直接実行します。
+ツールの場所の取得・バージョン取得・各フォームの変換には、それぞれ60秒の制限を設け、
+停止した場合は対象コマンドを示してビルドを失敗させます。
 Qwen専用Python・推論依存・モデルは配布ビルド時に取得しません。
 
 単一EXE形式による外部一時展開は使用しません。

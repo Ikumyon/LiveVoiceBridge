@@ -17,7 +17,7 @@ FORM_DIRECTORIES = (
     "src/livevoicebridge/desktop/resources/forms",
     "src/livevoicebridge/plugins/builtin",
 )
-UIC_COMMAND = ["-B", "-c", "from PySide6.scripts.pyside_tool import uic; uic()"]
+UIC_TIMEOUT_SECONDS = 60
 
 
 def form_sources(root: Path) -> list[Path]:
@@ -32,14 +32,38 @@ def generated_module(root: Path, source: Path) -> str:
     return ".".join(generated_path(source).relative_to(root / "src").with_suffix("").parts)
 
 
-def generation_inputs(root: Path, python: str) -> tuple[list[Path], bytes]:
+def generation_inputs(root: Path, python: str) -> tuple[list[Path], bytes, list[str]]:
     sources = form_sources(root)
     if not sources:
         raise ValueError("No application Designer forms were found.")
+    # Resolve the tool from the selected environment without importing Qt or its Python wrapper.
+    print("Locating Designer compiler in the selected Python environment", flush=True)
+    locate = (
+        "import sys; from importlib.metadata import distribution; "
+        "tool = 'PySide6/uic.exe' if sys.platform == 'win32' else 'PySide6/Qt/libexec/uic'; "
+        "print(distribution('PySide6_Essentials').locate_file(tool))"
+    )
+    executable = Path(
+        subprocess.check_output(
+            [python, "-B", "-c", locate],
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+            timeout=UIC_TIMEOUT_SECONDS,
+        ).strip()
+    )
+    if not executable.is_file():
+        raise FileNotFoundError(f"Designer compiler is missing: {executable}")
+    command = [str(executable), "-g", "python"]
+    print(f"Checking Designer compiler version: {executable}", flush=True)
     compiler = subprocess.check_output(
-        [python, *UIC_COMMAND, "--version"], encoding="utf-8", stderr=subprocess.STDOUT
+        [*command, "--version"],
+        encoding="utf-8",
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        timeout=UIC_TIMEOUT_SECONDS,
     ).strip()
-    return sources, Path(__file__).read_bytes() + compiler.encode("utf-8")
+    print(f"Designer compiler: {compiler}", flush=True)
+    return sources, Path(__file__).read_bytes() + compiler.encode("utf-8"), command
 
 
 def generated_header(source: Path, signature: bytes) -> str:
@@ -57,7 +81,7 @@ def obsolete_forms(root: Path, targets: set[Path]) -> list[Path]:
 
 
 def check_generated(root: Path = ROOT, python: str = sys.executable) -> bool:
-    sources, signature = generation_inputs(root, python)
+    sources, signature, _ = generation_inputs(root, python)
     issues = []
     for source in sources:
         target = generated_path(source)
@@ -76,7 +100,7 @@ def check_generated(root: Path = ROOT, python: str = sys.executable) -> bool:
 
 
 def generate(root: Path = ROOT, python: str = sys.executable, *, force: bool = False) -> None:
-    sources, signature = generation_inputs(root, python)
+    sources, signature, command = generation_inputs(root, python)
     for path in obsolete_forms(root, {generated_path(source) for source in sources}):
         path.unlink()
         print(f"Removed obsolete form: {path.relative_to(root)}")
@@ -100,7 +124,14 @@ def generate(root: Path = ROOT, python: str = sys.executable, *, force: bool = F
         root_module = custom_roots.get(root_class, "PySide6.QtWidgets")
         if not root_module or not all(part.isidentifier() for part in root_module.split(".")):
             raise ValueError(f"Invalid root widget import: {source}")
-        compiled = subprocess.check_output([python, *UIC_COMMAND, source.name], cwd=source.parent, encoding="utf-8")
+        print(f"Compiling Designer form: {source.relative_to(root)}", flush=True)
+        compiled = subprocess.check_output(
+            [*command, source.name],
+            cwd=source.parent,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+            timeout=UIC_TIMEOUT_SECONDS,
+        )
         factory = (
             f"\n\nfrom {root_module} import {root_class} as _FormRoot\n"
             "from livevoicebridge.desktop.forms import setup_form as _setup_form\n\n\n"
@@ -110,7 +141,7 @@ def generate(root: Path = ROOT, python: str = sys.executable, *, force: bool = F
         result = header + compiled + factory
         ast.parse(result, filename=str(target))
         target.write_text(result, encoding="utf-8", newline="\n")
-        print(f"Generated form: {target.relative_to(root)}")
+        print(f"Generated form: {target.relative_to(root)}", flush=True)
 
 
 def main() -> None:
@@ -134,6 +165,9 @@ if __name__ == "__main__":
         main()
     except subprocess.CalledProcessError as exc:
         raise SystemExit(exc.returncode) from exc
+    except subprocess.TimeoutExpired as exc:
+        print(f"Designer compiler command timed out after {exc.timeout}s: {exc.cmd}", file=sys.stderr)
+        raise SystemExit(1) from exc
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc

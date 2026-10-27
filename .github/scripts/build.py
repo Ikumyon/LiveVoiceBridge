@@ -219,6 +219,9 @@ if __name__ == "__main__":
         main()
     except subprocess.CalledProcessError as exc:
         raise SystemExit(exc.returncode) from exc
+    except subprocess.TimeoutExpired as exc:
+        print(f"Designer compiler command timed out after {exc.timeout}s: {exc.cmd}", file=sys.stderr)
+        raise SystemExit(1) from exc
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc
