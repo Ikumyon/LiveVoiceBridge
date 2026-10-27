@@ -91,7 +91,7 @@ impl MetricsProvider for SystemMetricsProvider {
             let dt = self.last_network.replace(now).map_or(1.0, |last| {
                 now.duration_since(last).as_secs_f32().max(0.001)
             });
-            for (_, data) in networks.iter() {
+            for data in networks.values() {
                 result.net_recv_speed_kb += data.received() as f32 / dt / 1024.0;
                 result.net_send_speed_kb += data.transmitted() as f32 / dt / 1024.0;
             }
