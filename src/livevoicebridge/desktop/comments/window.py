@@ -8,8 +8,8 @@ from PySide6.QtWidgets import QPushButton, QSplitter, QWidget
 
 from livevoicebridge.core.settings.models import PresentationConfig
 from livevoicebridge.core.telemetry.models import MetricFrame
-from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.monitoring.popup import POPUP_METRIC_PLACEMENTS, PopupMetricsPanel
+from livevoicebridge.desktop.resources.forms.ui_comment_window import create_form
 
 
 class CommentWindow(QWidget):
@@ -43,7 +43,7 @@ class CommentWindow(QWidget):
         # ドラッグ移動用の位置保持
         self._drag_pos = QPoint()
 
-        self._content = load_form("comment_window", root=self, widgets=(PopupMetricsPanel,))
+        self._content = create_form(root=self)
         self.header_bar: QWidget = self._content.findChild(QWidget, "headerBar")
         self.close_button: QPushButton = self._content.findChild(QPushButton, "closeButton")
         self.content_splitter: QSplitter = self._content.findChild(QSplitter, "contentSplitter")

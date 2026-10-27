@@ -8,7 +8,7 @@ use windows::Win32::System::Performance::{
     PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
 };
 
-use crate::types::GpuMetric;
+use crate::types::{GpuMetric, MetricsRequest};
 
 type AdapterId = (u32, u32);
 
@@ -169,13 +169,20 @@ pub struct WindowsGpuMetrics {
 impl WindowsGpuMetrics {
     pub fn new() -> Self {
         Self {
-            query: GpuQuery::new(),
+            query: None,
             devices: Vec::new(),
             last_devices: None,
         }
     }
 
-    pub fn collect(&mut self) -> Vec<GpuMetric> {
+    pub fn catalog(&mut self) -> Vec<(String, String)> {
+        Self::enumerate()
+            .into_iter()
+            .map(|(id, name, _)| (format!("gpu:luid_{:08x}_{:08x}", id.0, id.1), name))
+            .collect()
+    }
+
+    pub fn collect(&mut self, request: &MetricsRequest) -> Vec<GpuMetric> {
         if self.query.is_none() {
             self.query = GpuQuery::new();
         }
@@ -218,6 +225,7 @@ impl WindowsGpuMetrics {
         }
         self.devices
             .iter()
+            .filter(|(id, _, _)| request.wants(&format!("gpu:luid_{:08x}_{:08x}", id.0, id.1)))
             .map(|(id, name, total)| {
                 let used = memory.get(id).map(|bytes| bytes / 1024.0_f64.powi(3));
                 GpuMetric {

@@ -3,9 +3,10 @@ from PySide6.QtGui import QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from livevoicebridge.core.telemetry.models import MetricFrame
-from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.monitoring.graph import frame_colors
 from livevoicebridge.desktop.monitoring.series import paint_histories
+from livevoicebridge.desktop.resources.forms.ui_metric_card import create_form as create_metric_card
+from livevoicebridge.desktop.resources.forms.ui_popup_metrics import create_form as create_popup_metrics
 
 POPUP_METRIC_MODES = {"hidden": "非表示", "text": "文字のみ", "both": "文字＋グラフ"}
 POPUP_METRIC_PLACEMENTS = {"top": "上", "bottom": "下", "left": "左", "right": "右"}
@@ -29,7 +30,7 @@ class PopupMetricCard(QWidget):
         self.frame = frame
         self.mode = ""
         self.background_opacity = 0.8
-        load_form("metric_card", root=self)
+        create_metric_card(root=self)
         self.card_layout = self.findChild(QVBoxLayout, "cardLayout")
         self.title_label = self.findChild(QLabel, "titleLabel")
         self.value_label = self.findChild(QLabel, "valueLabel")
@@ -89,13 +90,9 @@ class PopupMetricCard(QWidget):
 class PopupMetricsPanel(QScrollArea):
     visibility_changed = Signal(bool)
 
-    def __init__(self, parent=None, defer_form=False):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        if not defer_form:
-            self.initialize_form()
-
-    def initialize_form(self):
-        load_form("popup_metrics", root=self)
+        create_popup_metrics(root=self)
         self.content = self.findChild(QWidget, "metricsContent")
         self.grid = self.findChild(QGridLayout, "metricsGrid")
         self._frames: tuple[MetricFrame, ...] = ()

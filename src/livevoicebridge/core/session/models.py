@@ -43,6 +43,11 @@ class MetricsCollected:
 
 
 @dataclass(frozen=True, slots=True)
+class MetricCatalogUpdated:
+    entries: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class UpdateAvailable:
     version: str
 
@@ -58,6 +63,7 @@ ApplicationEvent = (
     | SettingsApplied
     | LogMessage
     | MetricsCollected
+    | MetricCatalogUpdated
     | UpdateAvailable
     | ShutdownCompleted
     | ApplicationIssue

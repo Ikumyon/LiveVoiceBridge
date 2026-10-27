@@ -1,6 +1,7 @@
 from collections import deque
 from dataclasses import dataclass
 from threading import Lock
+from time import monotonic
 
 from livevoicebridge.core.telemetry.models import Measurement, MetricFrame, MetricsSnapshot
 
@@ -8,6 +9,7 @@ from livevoicebridge.core.telemetry.models import Measurement, MetricFrame, Metr
 @dataclass
 class _Track:
     histories: list[deque[float | None]]
+    second: int | None = None
 
 
 def _format(item: Measurement, suffix: str = "", precision: int = 1) -> str:
@@ -15,7 +17,7 @@ def _format(item: Measurement, suffix: str = "", precision: int = 1) -> str:
 
 
 class MetricsStore:
-    """A single 60-sample history; immutable frames are shared by every view."""
+    """A single 60-second history; unsampled seconds remain gaps."""
 
     def __init__(self) -> None:
         self._lock = Lock()
@@ -28,8 +30,9 @@ class MetricsStore:
         with self._lock:
             self._connections = count
 
-    def record(self, sample: MetricsSnapshot) -> None:
+    def record(self, sample: MetricsSnapshot, identifiers: frozenset[str] | None) -> None:
         with self._lock:
+            second = int(monotonic())
             self._latest = sample
             specs: list[tuple[str, str, str, str, float, str, tuple[float | None, ...]]] = [
                 ("cpu", "CPU 使用率", "cpu", "%", 100, _format(sample.cpu_percent, " %"), (sample.cpu_percent.value,)),
@@ -82,10 +85,10 @@ class MetricsStore:
                     values = (usage, used / total * 100 if used is not None else None)
                     text += f" | VRAM: {_format(gpu.memory_used, precision=2)}/{total:.1f} GB"
                 specs.append((f"gpu:{gpu.identifier}", gpu.name, "gpu", "%", 100, text, values))
-            alive = {spec[0] for spec in specs}
-            self._tracks = {key: value for key, value in self._tracks.items() if key in alive}
             frames = []
             for identifier, title, kind, unit, maximum, text, values in specs:
+                if identifiers is not None and identifier not in identifiers:
+                    continue
                 track = self._tracks.get(identifier)
                 if track is None:
                     track = _Track([])
@@ -94,7 +97,13 @@ class MetricsStore:
                     track.histories.append(deque([None] * 60, maxlen=60))
                 del track.histories[len(values) :]
                 for history, value in zip(track.histories, values, strict=True):
+                    if track.second == second:
+                        history[-1] = value
+                        continue
+                    gap = 0 if track.second is None else min(60, max(0, second - track.second - 1))
+                    history.extend([None] * gap)
                     history.append(value)
+                track.second = second
                 frames.append(
                     MetricFrame(identifier, title, kind, unit, maximum, text, tuple(tuple(h) for h in track.histories))
                 )

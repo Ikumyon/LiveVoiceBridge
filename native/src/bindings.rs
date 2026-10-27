@@ -1,7 +1,9 @@
 use crate::platform;
 use crate::platform::SocketCounter;
 use crate::traits::MetricsProvider;
+use crate::types::MetricsRequest;
 use pyo3::prelude::*;
+use std::collections::HashSet;
 
 #[pyclass(frozen, get_all, from_py_object)]
 #[derive(Clone)]
@@ -50,7 +52,9 @@ pub struct NativeMetricsSnapshot {
 pub struct RustMetricsCollector {
     provider: Option<Box<dyn MetricsProvider>>,
     sockets: SocketCounter,
-    first: bool,
+    request: MetricsRequest,
+    active: HashSet<String>,
+    closed: bool,
 }
 
 #[pymethods]
@@ -58,45 +62,81 @@ impl RustMetricsCollector {
     #[new]
     fn new() -> Self {
         Self {
-            provider: Some(platform::create_metrics_provider()),
+            provider: None,
             sockets: SocketCounter::new(),
-            first: true,
+            request: MetricsRequest(Some(HashSet::new())),
+            active: HashSet::new(),
+            closed: false,
         }
     }
+    #[pyo3(signature = (identifiers))]
+    fn set_request(&mut self, identifiers: Option<Vec<String>>) {
+        self.request = MetricsRequest(identifiers.map(|ids| ids.into_iter().collect()));
+        self.active.retain(|id| self.request.wants(id));
+        if let Some(provider) = &mut self.provider {
+            provider.set_request(&self.request);
+        }
+    }
+
+    fn discover_gpus(&mut self, py: Python<'_>) -> PyResult<Vec<(String, String)>> {
+        py.detach(|| {
+            if self.closed {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "メトリクス取得は終了しています。",
+                ));
+            }
+            Ok(self
+                .provider
+                .get_or_insert_with(platform::create_metrics_provider)
+                .discover_gpus())
+        })
+    }
+
     fn collect(&mut self, py: Python<'_>) -> PyResult<NativeMetricsSnapshot> {
         py.detach(|| {
+            if self.closed {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "メトリクス取得は終了しています。",
+                ));
+            }
             let raw = self
                 .provider
-                .as_mut()
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("メトリクス取得は終了しています。")
-                })?
-                .collect();
-            let phase = if self.first {
-                "warming_up"
-            } else {
-                "unavailable"
-            };
+                .get_or_insert_with(platform::create_metrics_provider)
+                .collect(&self.request);
             let available = |id: &str| raw.available_metrics.iter().any(|key| key == id);
+            let cpu_ready = self.active.contains("cpu");
+            let network_ready = self.active.contains("network");
             let cpu = Measurement::new(
-                (available("cpu") && !self.first).then_some(raw.cpu_percent as f64),
-                phase,
+                (available("cpu") && cpu_ready).then_some(raw.cpu_percent as f64),
+                if cpu_ready {
+                    "unavailable"
+                } else {
+                    "warming_up"
+                },
             );
             let ram = available("ram");
-            let network = available("network") && !self.first;
+            let network = available("network") && network_ready;
             let gpus = raw
                 .gpus
                 .into_iter()
                 .map(|gpu| {
-                    let state = if gpu.usage_supported {
-                        phase
-                    } else {
+                    let id = format!("gpu:{}", gpu.id);
+                    let ready = self.active.contains(&id);
+                    self.active.insert(id);
+                    let state = if !gpu.usage_supported {
                         "unsupported"
+                    } else if ready {
+                        "unavailable"
+                    } else {
+                        "warming_up"
                     };
                     NativeGpu {
                         identifier: gpu.id,
                         name: gpu.name,
-                        usage: Measurement::new(gpu.gpu_percent.map(f64::from), state),
+                        usage: Measurement::new(
+                            gpu.gpu_percent.filter(|_| ready).map(f64::from),
+                            state,
+                        ),
                         memory_used: Measurement::new(
                             gpu.has_vram.then_some(gpu.vram_used_gb as f64),
                             if gpu.vram_total_gb > 0.0 {
@@ -112,7 +152,16 @@ impl RustMetricsCollector {
                     }
                 })
                 .collect();
-            self.first = false;
+            for id in ["cpu", "network"] {
+                if self.request.wants(id) {
+                    self.active.insert(id.into());
+                }
+            }
+            let phase = if network_ready {
+                "unavailable"
+            } else {
+                "warming_up"
+            };
             Ok(NativeMetricsSnapshot {
                 cpu_percent: cpu,
                 npu_percent: Measurement::new(None, "unsupported"),
@@ -132,13 +181,18 @@ impl RustMetricsCollector {
                 ),
                 gpus,
                 active_sockets: Measurement::new(
-                    self.sockets.count().map(|value| value as f64),
+                    if self.request.wants("sockets") {
+                        self.sockets.count().map(|value| value as f64)
+                    } else {
+                        None
+                    },
                     "unavailable",
                 ),
             })
         })
     }
     fn close(&mut self, py: Python<'_>) {
+        self.closed = true;
         let provider = self.provider.take();
         py.detach(|| drop(provider));
         self.sockets = SocketCounter::new();

@@ -4,9 +4,19 @@
 
 ## 起動と初期準備
 
-配布物をフォルダ単位で展開し、Windowsでは `LiveVoiceBridge.exe`、
-Linuxでは `LiveVoiceBridge` を起動します。`_internal/` は実行ファイルと一緒に配置します。
+ビルド済みの配布物は、次の手順で起動します。Python・Rustの導入やUI変換は不要です。
+
+1. [Releases](https://github.com/Ikumyon/LiveVoiceBridge/releases)のAssetsからOSに対応したファイルを取得します。
+2. 書き込み可能な場所へフォルダ全体を展開します。`_internal/` は実行ファイルと一緒に残します。
+3. 展開先の実行ファイルを起動します。
+
+| OS | 配布ファイル | 起動するファイル |
+| --- | --- | --- |
+| Windows | `LiveVoiceBridge-Windows-x64.zip` | `LiveVoiceBridge.exe` |
+| Linux | `LiveVoiceBridge-Linux-x64.tar.gz` | `LiveVoiceBridge` |
+
 配置先には書き込み権限が必要です。正式配布はx64向けで、Qwenの自動導入もx86_64が対象です。
+ソースから実行する場合は[ソースから起動する手順](../source/development.md#ソースから起動)を参照してください。
 
 初回起動時に `data/config.json`、`data/dictionary.db`、`data/sounds/` を準備します。
 設定の読み込みや辞書の初期化に失敗した場合は起動エラーを表示します。

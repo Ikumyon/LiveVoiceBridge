@@ -10,6 +10,12 @@ class NativeMetricsProvider:
     def __init__(self):
         self._collector = _native.RustMetricsCollector()
 
+    def set_request(self, identifiers: frozenset[str] | None) -> None:
+        self._collector.set_request(None if identifiers is None else sorted(identifiers))
+
+    def discover_gpus(self) -> tuple[tuple[str, str], ...]:
+        return tuple(self._collector.discover_gpus())
+
     def collect(self) -> MetricsSnapshot:
         data = self._collector.collect()
         return MetricsSnapshot(

@@ -3,8 +3,8 @@ from PySide6.QtGui import QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import QLabel, QWidget
 
 from livevoicebridge.core.telemetry.models import MetricFrame
-from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.monitoring.series import paint_histories
+from livevoicebridge.desktop.resources.forms.ui_performance_graph import create_form
 
 
 def frame_colors(kind: str) -> tuple[QColor, ...]:
@@ -20,14 +20,10 @@ def frame_colors(kind: str) -> tuple[QColor, ...]:
 
 
 class PerformanceGraphWidget(QWidget):
-    def __init__(self, parent=None, defer_form=False):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        if not defer_form:
-            self.initialize_form()
-
-    def initialize_form(self):
         self._frame: MetricFrame | None = None
-        load_form("performance_graph", root=self)
+        create_form(root=self)
         self.title_label = self.findChild(QLabel, "titleLabel")
         self.value_label = self.findChild(QLabel, "valueLabel")
 

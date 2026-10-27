@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTableView,
-    QTabWidget,
     QWidget,
 )
 
@@ -31,7 +31,7 @@ class DictionaryView(QObject):
         self._bind_dictionary_widgets()
         self._setup_dictionary_table()
         self.current_active_group_name = config.active_group
-        self._dictionary_view_loaded = self.settings_tabs.currentWidget() is self.dictionary_tab
+        self._dictionary_view_loaded = self.settings_pages.currentWidget() is self.dictionary_page
         self.add_word_button.clicked.connect(self.add_word_row)
         self.delete_word_button.clicked.connect(self.delete_word_row)
         self.import_word_button.clicked.connect(self.import_words)
@@ -39,15 +39,15 @@ class DictionaryView(QObject):
         self.rename_group_button.clicked.connect(self.rename_dictionary_group)
         self.delete_group_button.clicked.connect(self.delete_dictionary_group)
         self.group_combo.currentTextChanged.connect(self.on_group_changed)
-        self.settings_tabs.currentChanged.connect(self.on_settings_tab_changed)
+        self.settings_pages.currentChanged.connect(self.on_settings_page_changed)
 
     def read(self) -> DictionaryConfig:
         return DictionaryConfig(active_group=self.group_combo.currentText() or self.current_active_group_name)
 
     def _bind_dictionary_widgets(self) -> None:
         # 読み替え辞書UIのバインド
-        self.settings_tabs: QTabWidget = self.dialog_window.findChild(QTabWidget, "settingsTabWidget")
-        self.dictionary_tab: QWidget = self.dialog_window.findChild(QWidget, "dictionaryTab")
+        self.settings_pages: QStackedWidget = self.dialog_window.findChild(QStackedWidget, "settingsPages")
+        self.dictionary_page: QWidget = self.dialog_window.findChild(QWidget, "dictionaryPage")
         self.word_table: QTableView = self.dialog_window.findChild(QTableView, "wordTableView")
         self.add_word_button: QPushButton = self.dialog_window.findChild(QPushButton, "addWordButton")
         self.delete_word_button: QPushButton = self.dialog_window.findChild(QPushButton, "deleteWordButton")
@@ -70,8 +70,8 @@ class DictionaryView(QObject):
         self.current_active_group_name = new_group_name
         self.dictionary_requested.emit("select", self.group_combo.currentData())
 
-    def on_settings_tab_changed(self, _index: int) -> None:
-        if self.settings_tabs.currentWidget() is self.dictionary_tab:
+    def on_settings_page_changed(self, _index: int) -> None:
+        if self.settings_pages.currentWidget() is self.dictionary_page:
             self._load_dictionary_view()
 
     def _load_dictionary_view(self) -> None:

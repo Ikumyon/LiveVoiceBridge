@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin"]
+requires = ["maturin>=1.0"]
 build-backend = "maturin"
 
 [project]
@@ -28,7 +28,7 @@ include = ["src/livevoicebridge/desktop/resources/**/*", "src/livevoicebridge/in
 [tool.ruff]
 target-version = "py314"
 line-length = 120
-extend-exclude = ["src/livevoicebridge/integrations/youtube/generated"]
+extend-exclude = ["src/livevoicebridge/integrations/youtube/generated", "ui_*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -44,4 +44,4 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 mypy_path = "src"
 
-exclude = ["integrations/youtube/generated/"]
+exclude = ["integrations/youtube/generated/", "(^|/)ui_[^/]+\\.py$"]

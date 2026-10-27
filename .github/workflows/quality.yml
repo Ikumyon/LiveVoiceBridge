@@ -31,16 +31,27 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
       - name: Install Python check dependencies
-        run: >
-          python -c "import pathlib,subprocess,sys,tomllib;
-          p=tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project'];
-          subprocess.check_call([sys.executable,'-m','pip','install','--upgrade','--upgrade-strategy','eager',*p['dependencies'],*p['optional-dependencies']['dev']])"
+        run: python .github/scripts/environment.py dev
+      - name: Select project environment
+        shell: python
+        run: |
+          import os
+          import sys
+          from pathlib import Path
+
+          environment = Path('venv').resolve()
+          scripts = environment / ('Scripts' if sys.platform == 'win32' else 'bin')
+          python = scripts / ('python.exe' if sys.platform == 'win32' else 'python')
+          with open(os.environ['GITHUB_PATH'], 'a', encoding='utf-8') as output:
+              output.write(str(scripts) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              output.write(f'VIRTUAL_ENV={environment}\nPYO3_PYTHON={python}\n')
       - name: Python lint and formatting
         run: |
-          ruff check src services/qwen3/src tools examples/plugins
-          ruff format --check src services/qwen3/src tools examples/plugins
+          ruff check src services/qwen3/src .github/scripts examples/plugins
+          ruff format --check src services/qwen3/src .github/scripts examples/plugins
       - name: Python type check
-        run: mypy src/livevoicebridge services/qwen3/src tools examples/plugins
+        run: mypy src/livevoicebridge services/qwen3/src .github/scripts examples/plugins
       - name: Update Rust dependencies
         run: cargo update --manifest-path native/Cargo.toml
       - name: Rust type check

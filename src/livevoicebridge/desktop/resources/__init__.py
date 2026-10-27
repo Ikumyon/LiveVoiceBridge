@@ -3,7 +3,6 @@
 from pathlib import Path
 
 RESOURCE_DIR = Path(__file__).resolve().parent
-UI_DIR = RESOURCE_DIR / "forms"
 ASSET_DIR = RESOURCE_DIR / "icons"
 ICON_FILE = ASSET_DIR / "icon.png"
 SETTINGS_ICON_FILE = ASSET_DIR / "settings.svg"

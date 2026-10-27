@@ -2,10 +2,15 @@
 __pycache__/
 *.pyc
 *.pyo
+ui_*.py
 *.pyd
 *.pdb
 .venv/
 venv/
+/local/
+/tools/
+*.bat
+*.ps1
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -1,10 +1,12 @@
 """Serialize lifecycle and settings commands; workers never own session state."""
 
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from queue import Empty, Queue
 from threading import BoundedSemaphore, Event, Lock, Thread
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from livevoicebridge.core.chat.models import CommentEvent
@@ -15,6 +17,7 @@ from livevoicebridge.core.session.models import (
     ApplicationEvent,
     CommentReceived,
     LogMessage,
+    MetricCatalogUpdated,
     MetricsCollected,
     RuntimeState,
     SessionChanged,
@@ -33,7 +36,7 @@ from livevoicebridge.core.speech.ports import (
     ExternalSpeechOutput,
     TextProcessor,
 )
-from livevoicebridge.core.telemetry.models import ApplicationIssue, ErrorKind
+from livevoicebridge.core.telemetry.models import ApplicationIssue, ErrorKind, MetricFrame, MetricsSnapshot
 from livevoicebridge.core.telemetry.ports import MetricsProvider, UpdateProvider
 from livevoicebridge.core.telemetry.store import MetricsStore
 
@@ -79,6 +82,12 @@ class SessionService:
         self._session = 0
         self._closing = False
         self._shutdown = Event()
+        self._monitor_wake = Event()
+        self._metrics_request: frozenset[str] | None = frozenset()
+        self._metrics_revision = 0
+        self._metrics_sample_revision = -1
+        self._metrics_changes: deque[frozenset[str] | None] = deque()
+        self._catalog_requested = False
         self._state = RuntimeState.IDLE
         self._connected = False
         self._source: StreamingSource | None = None
@@ -457,16 +466,65 @@ class SessionService:
             if not self._closing:
                 self._auxiliary.submit(check)
 
+    def set_metrics_request(self, identifiers: frozenset[str] | None) -> None:
+        """None requests all metrics; an empty set suspends OS sampling."""
+        with self._lock:
+            if self._closing or identifiers == self._metrics_request:
+                return
+            self._metrics_request = identifiers
+            self._metrics_revision += 1
+            self._metrics_changes.append(identifiers)
+            self._monitor_wake.set()
+
+    def refresh_metric_catalog(self) -> None:
+        with self._lock:
+            if not self._closing:
+                self._catalog_requested = True
+                self._monitor_wake.set()
+
+    def read_metrics(self) -> tuple[tuple[MetricFrame, ...], MetricsSnapshot | None] | None:
+        with self._lock:
+            if self._metrics_sample_revision != self._metrics_revision:
+                return None
+            return self.metrics_store.read()
+
     def _observe(self) -> None:
+        next_sample = 0.0
         while not self._shutdown.is_set():
+            self._monitor_wake.clear()
+            with self._lock:
+                changes = tuple(self._metrics_changes)
+                self._metrics_changes.clear()
+                request = self._metrics_request
+                revision = self._metrics_revision
+                discover = self._catalog_requested
+                self._catalog_requested = False
+            # Audio error delivery remains active even when metrics are suspended.
             try:
                 for message in self._audio.drain_errors():
                     self._publish(LogMessage(message))
-                self.metrics_store.record(self._metrics.collect())
-                self._publish(MetricsCollected())
             except Exception as exc:
+                self._publish(LogMessage(f"音声エラー取得失敗: {exc}"))
+            try:
+                for change in changes:
+                    self._metrics.set_request(change)
+                if discover:
+                    self._publish(MetricCatalogUpdated(self._metrics.discover_gpus()))
+                if changes:
+                    next_sample = 0.0
+                if (request is None or request) and monotonic() >= next_sample:
+                    sample = self._metrics.collect()
+                    with self._lock:
+                        if not self._closing and revision == self._metrics_revision:
+                            self.metrics_store.record(sample, request)
+                            self._metrics_sample_revision = revision
+                            self._publish(MetricsCollected())
+                    next_sample = monotonic() + 1.0
+            except Exception as exc:
+                next_sample = monotonic() + 1.0
                 self._publish(LogMessage(f"メトリクス取得失敗: {exc}"))
-            self._shutdown.wait(1)
+            delay = min(1.0, max(0.0, next_sample - monotonic())) if request is None or request else 1.0
+            self._monitor_wake.wait(delay)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -475,6 +533,7 @@ class SessionService:
             self._closing = True
             self._intent += 1
         self._shutdown.set()
+        self._monitor_wake.set()
         while True:
             try:
                 self._commands.get_nowait()

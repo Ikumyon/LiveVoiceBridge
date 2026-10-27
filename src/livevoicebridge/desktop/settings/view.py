@@ -5,16 +5,24 @@ from dataclasses import replace
 
 from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QLineEdit, QMessageBox, QToolButton
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialogButtonBox,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QStackedWidget,
+    QToolButton,
+)
 
 from livevoicebridge.core.settings.models import AppConfig
 from livevoicebridge.desktop.dictionary.view import DictionaryView
-from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.rendering.icons import load_svg_icon
 from livevoicebridge.desktop.resources import EXTERNAL_LINK_ICON_FILE
+from livevoicebridge.desktop.resources.forms.ui_settings_dialog import create_form
 from livevoicebridge.desktop.settings.engines import EngineEditor, PluginEditor
 from livevoicebridge.desktop.settings.presentation import PresentationEditor
-from livevoicebridge.desktop.settings.read_blocks import PlaceholderFrame, ReadBlockEditor
+from livevoicebridge.desktop.settings.read_blocks import ReadBlockEditor
 from livevoicebridge.desktop.settings.resources import ResourceEditor
 from livevoicebridge.plugins.manager import PluginManager
 
@@ -26,8 +34,12 @@ class SettingsDialog(QObject):
     def __init__(self, config: AppConfig, catalog: list, executable_filter: str, plugins: PluginManager):
         super().__init__()
         self.config = config
-        self.dialog_window = load_form("settings_dialog", widgets=(PlaceholderFrame,))
+        self.dialog_window = create_form()
         window = self.dialog_window
+        self.navigation = window.findChild(QListWidget, "settingsNavigation")
+        self.pages = window.findChild(QStackedWidget, "settingsPages")
+        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.setCurrentRow(0)
         self.engines = EngineEditor(window, config.speech, executable_filter, plugins)
         self.plugins = PluginEditor(window, plugins, config.application.plugin_enabled)
         self.read_blocks = ReadBlockEditor(window, config.speech.read_blocks)
@@ -57,6 +69,8 @@ class SettingsDialog(QObject):
             )
         )
         buttons = window.findChild(QDialogButtonBox, "buttonBox")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("保存して閉じる")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("キャンセル")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(window.reject)
 

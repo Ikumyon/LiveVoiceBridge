@@ -9,6 +9,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -22,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from livevoicebridge.core.speech.models import EngineConfig, Speaker, SpeechConfig
-from livevoicebridge.desktop.forms import load_form
+from livevoicebridge.desktop.resources.forms.ui_plugin_setting_row import create_form
 from livevoicebridge.desktop.settings.speakers import SpeakerMenu
 from livevoicebridge.plugins.contracts import SettingField
 from livevoicebridge.plugins.manager import PluginManager
@@ -45,6 +48,11 @@ class EngineEditor(QObject):
         self._page: SettingsPage | None = None
         self.combo = window.findChild(QComboBox, "ttsEngineComboBox")
         self.layout = window.findChild(QVBoxLayout, "engineSettingsLayout")
+        self.connection_layout = window.findChild(QVBoxLayout, "engineConnectionLayout")
+        self.parameters_layout = window.findChild(QGridLayout, "engineParametersLayout")
+        self.connection_group = window.findChild(QGroupBox, "engineConnectionGroup")
+        self.parameters_group = window.findChild(QGroupBox, "engineParametersGroup")
+        self.additional_group = window.findChild(QGroupBox, "engineAdditionalGroup")
         self.status = window.findChild(QLabel, "ttsUnavailableLabel")
         self.speaker_line = window.findChild(QLineEdit, "speakerIdLine")
         self.maximum = window.findChild(QSpinBox, "maximumSpin")
@@ -68,10 +76,11 @@ class EngineEditor(QObject):
             self._page.close()
             self._page = None
         self._rows.clear()
-        while self.layout.count():
-            item = self.layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+        for layout in (self.layout, self.connection_layout, self.parameters_layout):
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
 
     def _show_engine(self) -> None:
         self._clear()
@@ -86,6 +95,9 @@ class EngineEditor(QObject):
         self.status.setText(
             "" if available else "このTTSは利用できません。プラグインの状態を確認するか、別のTTSを選択してください。"
         )
+        self.status.setVisible(not available)
+        for group in (self.connection_group, self.parameters_group, self.additional_group):
+            group.hide()
         if provider is None:
             return
         for field in provider.fields:
@@ -95,12 +107,13 @@ class EngineEditor(QObject):
             try:
                 self._page = factory(self.window, self.engine)
                 self.layout.addWidget(self._page.widget)
+                self.additional_group.show()
             except Exception as exc:
                 self.status.setText(f"追加設定画面を開けません: {exc}")
-        self.layout.addStretch()
+                self.status.show()
 
     def _add_row(self, field: SettingField, value) -> None:
-        row = load_form("plugin_setting_row")
+        row = create_form()
         row.findChild(QLabel, "titleLabel").setText(field.title)
         stack = row.findChild(QStackedWidget, "valueStack")
         kind = field.kind
@@ -134,7 +147,13 @@ class EngineEditor(QObject):
             control.setValue(value)
             control.valueChanged.connect(self.changed.emit)
         self._rows.append((field, row, control))
-        self.layout.addWidget(row)
+        if field.kind in {"number", "integer", "bool"}:
+            index = self.parameters_layout.count()
+            self.parameters_layout.addWidget(row, index // 2, index % 2)
+            self.parameters_group.show()
+        else:
+            self.connection_layout.addWidget(row)
+            self.connection_group.show()
 
     def _browse(self, field: SettingField, control: QLineEdit) -> None:
         if field.kind == "directory":
@@ -174,6 +193,7 @@ class EngineEditor(QObject):
             self._configs[self.active] = self.engine()
         except Exception as exc:
             self.status.setText(str(exc))
+            self.status.show()
             return
         for latest in config.engines:
             identifier = latest.engine_id
@@ -246,6 +266,13 @@ class PluginEditor(QObject):
         self._plugins = plugins
         self._table = window.findChild(QTableWidget, "pluginsTable")
         self._restart = window.findChild(QLabel, "pluginsRestartLabel")
+        self._identity = window.findChild(QLabel, "pluginIdentityLabel")
+        self._kind = window.findChild(QLabel, "pluginKindLabel")
+        self._error = window.findChild(QLabel, "pluginErrorLabel")
+        self._table.verticalHeader().setVisible(False)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._table.setRowCount(len(plugins.inventory))
         for row, plugin in enumerate(plugins.inventory):
             selected = self._values.get(plugin.id, plugin.builtin)
@@ -259,18 +286,31 @@ class PluginEditor(QObject):
             self._table.setItem(row, 0, item)
             for column, value in enumerate(
                 (
-                    f"{plugin.name} / {plugin.id}",
+                    plugin.name,
                     "内蔵" if plugin.builtin else "外部",
                     plugin.version,
-                    plugin.kind,
                     plugin.status,
-                    plugin.error,
                 ),
                 1,
             ):
                 self._table.setItem(row, column, QTableWidgetItem(value))
-        self._table.resizeColumnsToContents()
+        self._table.currentCellChanged.connect(self._show_details)
         self._table.itemChanged.connect(self._changed)
+        if plugins.inventory:
+            self._table.setCurrentCell(0, 1)
+        else:
+            self._identity.setText("プラグインはありません。")
+
+    def _show_details(self, row: int, _column: int, _previous_row: int, _previous_column: int) -> None:
+        if row < 0:
+            self._identity.setText("プラグインを選択してください。")
+            self._kind.clear()
+            self._error.clear()
+            return
+        plugin = self._plugins.inventory[row]
+        self._identity.setText(f"ID：{plugin.id}")
+        self._kind.setText(f"形式：{plugin.kind}")
+        self._error.setText(f"エラー：{plugin.error}" if plugin.error else "エラー：なし")
 
     def _changed(self, item: QTableWidgetItem) -> None:
         if item.column() == 0:

@@ -15,18 +15,67 @@ Ubuntu/Debianのパッケージ名は `libasound2-dev pkg-config` です。
 開発中の内部APIは新方式へ移行し、旧import・旧APIの互換層や並行実装は残しません。
 リリース済み設定の変換・バックアップは互換性を維持します。
 
-環境作成と開発依存の導入例です。これらは依存導入・拡張ビルドを伴う手順です。
+環境作成・依存導入は `.github/scripts/environment.py`、UI変換は `.github/scripts/generate_ui.py`、
+Rust/Pythonのビルドと配布検査は `.github/scripts/build.py` が担当します。
+ビルド側は環境準備・変換の共通関数を呼び、同じ処理を再実装しません。
+アプリ起動はビルドツールの責務に含めません。
 
-```powershell
-python -m venv venv
-./venv/Scripts/Activate.ps1
-$env:PYTHONUTF8 = "1"
-python -m pip install -e ".[dev]"
+## ソースから起動
+
+上記のPython・Rust・OSごとのビルド環境に加えて、ソース取得用のGitを用意します。
+PythonとRustツールチェーン自体は、あらかじめインストールしてください。
+Linuxはデスクトップのグラフィカル環境から起動します。
+
+まずリポジトリを取得し、ルートディレクトリへ移動します。
+
+```text
+git clone https://github.com/Ikumyon/LiveVoiceBridge.git
+cd LiveVoiceBridge
 ```
 
-Linuxでは `source venv/bin/activate` を使用します。
-ソース起動の入口は `python -m livevoicebridge` です。
-型チェックだけではRust拡張は更新されません。
+### Windows
+
+通常版CPython 3.14以降を `python` で呼べるPowerShellを使用します。
+次の順に、仮想環境・依存の準備、Rust拡張のビルド、UI生成、起動を行います。
+
+```powershell
+$env:PYTHONUTF8 = "1"
+python .github/scripts/environment.py dev
+./venv/Scripts/python.exe .github/scripts/build.py rust
+./venv/Scripts/python.exe .github/scripts/generate_ui.py
+./venv/Scripts/python.exe -m livevoicebridge
+```
+
+### Linux
+
+次の `python3` は、通常版CPython 3.14以降を指す必要があります。
+
+```bash
+export PYTHONUTF8=1
+python3 .github/scripts/environment.py dev
+./venv/bin/python .github/scripts/build.py rust
+./venv/bin/python .github/scripts/generate_ui.py
+./venv/bin/python -m livevoicebridge
+```
+
+### 2回目以降
+
+リポジトリのルートで、Windowsは `./venv/Scripts/python.exe -m livevoicebridge`、
+Linuxは `./venv/bin/python -m livevoicebridge` を実行します。仮想環境のactivateは不要です。
+ソースの `.py` を直接開いたり、`__main__.py` を単独実行したりせず、`-m livevoicebridge` を使います。
+
+Python依存が変わった場合は、上記の `environment.py dev` を再実行します。
+`.ui` を編集・更新した場合は、仮想環境のPythonで `generate_ui.py` を再実行してから起動します。
+Rustソースを更新した場合は、仮想環境のPythonで `build.py rust` を再実行します。
+直接起動する場合も、生成済みUIと登録済みRust拡張が必要です。型チェックだけでは準備されません。
+
+環境ツールは `dev`・`ui`・`rust`・`package` の依存プロファイルを持ちます。
+開発用は本体と開発依存、UI用はPySide6を導入し、依存定義の指紋を `venv/` 内に保存します。
+初回・依存定義変更時だけpipを実行し、明示的な更新は `--update-dependencies` で行います。
+不完全なvenvは自動削除せず停止します。PythonとRustツールチェーン自体は自動インストールしません。
+
+`.github/scripts/build.py check-native` はRust拡張の未準備を終了コード2で通知します。
+Rustソース変更時の再ビルドは明示的に行います。
 
 ## 実装時の検証
 
@@ -34,40 +83,62 @@ Linuxでは `source venv/bin/activate` を使用します。
 アプリ起動・配布ビルド・音声再生・テスト実行・負荷計測は、別途明示的な指示がある場合だけ行います。
 
 ```powershell
-python -m mypy --cache-dir .codex-type-check-cache src/livevoicebridge services/qwen3/src tools
-python -m ruff check src services/qwen3/src tools
-python -m ruff format --check src services/qwen3/src tools
+python -m mypy --cache-dir .codex-type-check-cache src/livevoicebridge services/qwen3/src .github/scripts
+python -m ruff check src services/qwen3/src .github/scripts
+python -m ruff format --check src services/qwen3/src .github/scripts
 cargo check --locked --manifest-path native/Cargo.toml --all-targets
 cargo fmt --manifest-path native/Cargo.toml -- --check
 cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
 ```
 
-Pythonの生成protobufコードはRuff・mypyの対象から除外しています。
+Pythonの生成protobufコードと `ui_*.py` はRuff・mypyの対象から除外しています。
 Rustには辞書・解析・DSP等のテストがありますが、`--all-targets` の静的検査では実行しません。
 未実施の実機検証や性能測定を検証済みとして扱いません。
+
+## Designerフォームの生成
+
+画面の編集元は `.ui` のみです。本体の `desktop/resources/forms/` と内蔵プラグインのフォームを対象に、
+`pyside6-uic` と同じPySide6のコンパイラーで、各 `.ui` と同じディレクトリへ `ui_名前.py` を生成します。
+例えば `main_window.ui` は `ui_main_window.py`、Qwenの `settings.ui` は同じフォルダーの `ui_settings.py` です。
+生成ファイルは直接編集せず、Git管理にも含めません。
+
+```powershell
+./venv/Scripts/python.exe .github/scripts/generate_ui.py
+./venv/Scripts/python.exe .github/scripts/generate_ui.py --force
+./venv/Scripts/python.exe .github/scripts/generate_ui.py --check
+```
+
+通常の生成は入力内容・変換ツールの版・生成スクリプトの変更を指紋で判定し、変更分だけを更新します。
+削除済みフォームに対応する、このツールで生成したPythonも削除します。
+`--force` とPython配布ビルドでは全フォームを再生成し、変換失敗時は続行しません。
+`--check` は生成物の確認だけを行い、ファイルを作成・変更・削除しません。
+その他の生成コマンドはコード生成を伴います。生成処理は通常の静的検査には含めません。
+
+開発時・配布版とも各画面が対応する生成モジュールを直接importします。
+生成された `create_form()` と共通の `setup_form()` がルートの生成・再利用を担当し、
+独自ウィジェットは `.ui` のpromoted widget定義から構築します。
+実行時のXML読み込み、QtUiTools、QUiLoader、旧方式へのフォールバックはありません。
+生成物がない状態でアプリを直接起動するとimportエラーになります。先に生成してください。
 
 ## protobufの更新
 
 YouTubeのprotoと生成済みPythonは `integrations/youtube/generated/` に配置します。
-`python tools/generate_protocol.py` は一時領域で生成してパッチを標準出力へ出します。
-差分を確認し、`apply_patch` で適用します。
+protobufを更新した際は生成コードの差分を確認し、`apply_patch` で適用します。
 アプリ起動時のコード生成やsys.pathの書き換えはありません。
 生成コードに合わせ、grpcioとprotobufには最低版を設定しています。
 
 ## ローカルビルドの契約
 
-依存導入・Rust拡張・Python配布・同梱検査の共通実装は `tools/build.py` です。
+環境作成・依存導入の共通実装は `.github/scripts/environment.py` です。
+Rust拡張・Python配布・同梱検査の共通実装は `.github/scripts/build.py` です。
 以下はビルドを明示的に実施する場合の入口です。
 
-| 目的 | Windowsの入口 | 共通コマンド |
-| --- | --- | --- |
-| Rust拡張を更新 | `build_rust.bat` | `python tools/build.py rust` |
-| 配布フォルダを作成 | `build_python.bat` | `python tools/build.py python` |
-| CI用ソースから両工程を実施 | Actions | `python tools/build.py ci` |
-
-batは対応する `tools/*.ps1` を呼び、ps1が共通Pythonツールへ渡します。
-batは終了時に一時停止し、ps1の直接実行は一時停止しません。
-WindowsでPythonを選ぶ例は `./build_rust.bat -Python "C:\Python314\python.exe"` です。
+| 目的 | 共通コマンド |
+| --- | --- |
+| Rust拡張を更新 | `python .github/scripts/build.py rust` |
+| Rust拡張の登録を確認 | `python .github/scripts/build.py check-native` |
+| 配布フォルダを作成 | `python .github/scripts/build.py python` |
+| CI用ソースから両工程を実施 | `python .github/scripts/build.py ci` |
 
 ローカルはリポジトリの `venv/` を作成または再利用します。
 不完全なvenvや非対応Pythonは自動削除せず停止します。
@@ -86,13 +157,16 @@ Cargo.lockは解決結果として保持し、更新後の同一工程を `--loc
 
 PyInstallerは `packaging/LiveVoiceBridge.spec` を使い、
 `dist/LiveVoiceBridge/` に実行ファイルと `_internal/` を作ります。
-フォーム・アイコン・protobuf・Rust拡張・パッケージメタデータと、
+フォームごとの生成Python・アイコン・protobuf・Rust拡張・パッケージメタデータと、
 QwenのOS別JSON・サービスソース・pyprojectを同梱します。
+`.ui`・QtUiTools・開発用変換ツールは配布物へ同梱しません。
+生成PythonはPyInstallerの通常モジュールとして格納し、平文ファイルとしての配置は不要です。
 Qwen専用Python・推論依存・モデルは配布ビルド時に取得しません。
 
 単一EXE形式による外部一時展開は使用しません。
 WindowsのDLL解析時PATHはPythonとWindowsのディレクトリへ限定します。
-同梱検査は必須ファイル・バージョン・サービスソースの一致などを確認します。
+同梱検査は必須ファイル・バージョン・サービスソースの一致に加え、
+実行ファイル内の全生成フォームモジュールの収録と、`.ui`・QtUiToolsの不在を確認します。
 
 PyInstallerは `--clean --noconfirm` で出力先を更新します。
 利用者データをビルド出力先に置かないでください。
@@ -156,6 +230,6 @@ PR・main更新では圧縮と成果物保存を行いません。
 ## 実装参照
 
 - [プロジェクト設定](../../pyproject.toml)、[Rust依存](../../native/Cargo.toml)
-- [共通ビルド](../../tools/build.py)、[PyInstaller定義](../../packaging/LiveVoiceBridge.spec)
-- [生成差分](../../tools/generate_protocol.py)
+- [共通ビルド](../../.github/scripts/build.py)、[PyInstaller定義](../../packaging/LiveVoiceBridge.spec)
+- [環境準備](../../.github/scripts/environment.py)、[UI生成](../../.github/scripts/generate_ui.py)
 - [ビルドワークフロー](../../.github/workflows/build.yml)、[静的検査](../../.github/workflows/quality.yml)

@@ -227,7 +227,7 @@ class DictionaryPresenter(QObject):
             self._refresh(result if action == "add_group" else group, edit_last=action == "append")
             if action == "import":
                 QMessageBox.information(
-                    self.view.dialog_window, "インポート", f"{result}件を取り込みました。OKで反映します。"
+                    self.view.dialog_window, "インポート", f"{result}件を取り込みました。保存して閉じると反映します。"
                 )
 
         self._submit(mutate, mutated)

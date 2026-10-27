@@ -4,7 +4,7 @@ from collections import OrderedDict
 from dataclasses import replace
 from time import monotonic
 
-from PySide6.QtCore import QObject, QSize, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QSize, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from livevoicebridge.core.session.models import (
     LogMessage,
+    MetricCatalogUpdated,
     MetricsCollected,
     RuntimeState,
     SessionChanged,
@@ -30,7 +31,7 @@ from livevoicebridge.core.session.models import (
 )
 from livevoicebridge.core.session.service import SessionService
 from livevoicebridge.core.settings.models import ResourceLimits
-from livevoicebridge.core.telemetry.models import ApplicationIssue, MetricFrame
+from livevoicebridge.core.telemetry.models import ApplicationIssue
 from livevoicebridge.desktop.comments.avatars import AvatarCache
 from livevoicebridge.desktop.comments.delegate import CommentDelegate
 from livevoicebridge.desktop.comments.model import CommentListModel, CommentRow
@@ -74,7 +75,6 @@ class ShellPresenter(QObject):
         self.comment_window: CommentWindow | None = None
         self.settings_dialog: SettingsDialog | None = None
         self._comment_tab_layout = None
-        self.latest_metrics: tuple[MetricFrame, ...] = ()
         self._socket_count: int | None = None
         self.latest_youtube_connection_count = 0
         self.metric_catalog = fixed_metric_catalog()
@@ -84,6 +84,9 @@ class ShellPresenter(QObject):
         self._setup_comment_list()
         self._setup_toolbar_buttons()
         self.task_manager_widget = view.task_manager
+        self._metrics_visibility_pending = False
+        self.window.installEventFilter(self)
+        self.task_manager_widget.installEventFilter(self)
         self.url_line.setText(self.config.streaming.youtube_source)
         self.set_running_ui(False)
         self.start_button.clicked.connect(lambda: self.session.start(self.url_line.text()))
@@ -104,6 +107,51 @@ class ShellPresenter(QObject):
             self.set_comment_popout(True, persist=False)
         if self.config.application.check_updates:
             self.session.check_updates()
+        self._schedule_metrics_request()
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if event.type() in {QEvent.Type.Show, QEvent.Type.Hide, QEvent.Type.WindowStateChange}:
+            self._schedule_metrics_request()
+        return False
+
+    def _schedule_metrics_request(self) -> None:
+        if not self._metrics_visibility_pending and not self._closed:
+            self._metrics_visibility_pending = True
+            QTimer.singleShot(0, self._update_metrics_request)
+
+    def _task_metrics_visible(self) -> bool:
+        return self.task_manager_widget.isVisible() and not self.window.isMinimized()
+
+    def _popup_metrics_visible(self) -> bool:
+        window = self.comment_window
+        return window is not None and window.isVisible() and not window.isMinimized()
+
+    def _update_metrics_request(self) -> None:
+        self._metrics_visibility_pending = False
+        if self._closed:
+            return
+        if self._task_metrics_visible():
+            self.session.set_metrics_request(None)
+            self._refresh_metrics()
+            return
+        identifiers = (
+            frozenset(
+                key for key, mode in self.comment_window.metrics_panel.display_modes.items() if mode in {"text", "both"}
+            )
+            if self._popup_metrics_visible() and self.comment_window is not None
+            else frozenset()
+        )
+        self.session.set_metrics_request(identifiers)
+        self._refresh_metrics()
+
+    def _merge_metric_catalog(self, entries: tuple[tuple[str, str], ...]) -> None:
+        catalog = {item["id"]: item["title"] for item in self.metric_catalog}
+        catalog.update(entries)
+        updated = [{"id": key, "title": title} for key, title in catalog.items()]
+        if updated != self.metric_catalog:
+            self.metric_catalog = updated
+            if self.settings_dialog is not None:
+                self.settings_dialog.presentation.refresh_popup_metric_catalog(updated)
 
     @property
     def config(self):
@@ -133,6 +181,8 @@ class ShellPresenter(QObject):
             )
         elif isinstance(event, MetricsCollected):
             self._refresh_metrics()
+        elif isinstance(event, MetricCatalogUpdated):
+            self._merge_metric_catalog(event.entries)
         elif isinstance(event, SettingsApplied):
             self._apply_resources(event.config.resources)
             if self.settings_dialog is not None:
@@ -218,10 +268,13 @@ class ShellPresenter(QObject):
 
     def _refresh_metrics(self) -> None:
         self.events.acknowledge_metrics()
-        frames, sample = self.session.metrics_store.read()
-        self.latest_metrics = frames
-        self.task_manager_widget.update_metrics(frames)
-        if sample is not None:
+        latest = self.session.read_metrics()
+        if latest is None:
+            return
+        frames, sample = latest
+        if self._task_metrics_visible():
+            self.task_manager_widget.update_metrics(frames)
+        if sample is not None and self._task_metrics_visible():
             value = sample.active_sockets.value
             self._socket_count = int(value) if value is not None else None
             self.task_manager_widget.update_connection_info(
@@ -230,12 +283,8 @@ class ShellPresenter(QObject):
                 self.config.speech.active_engine,
                 self._socket_count,
             )
-        catalog = [{"id": frame.identifier, "title": frame.title} for frame in frames]
-        if catalog and catalog != self.metric_catalog:
-            self.metric_catalog = catalog
-            if self.settings_dialog is not None:
-                self.settings_dialog.presentation.refresh_popup_metric_catalog(catalog)
-        if self.comment_window is not None:
+        self._merge_metric_catalog(tuple((frame.identifier, frame.title) for frame in frames))
+        if self._popup_metrics_visible() and self.comment_window is not None:
             self.comment_window.update_metrics(frames)
 
     def send_test_comment(self):
@@ -251,6 +300,7 @@ class ShellPresenter(QObject):
         dialog = SettingsDialog(self.config, self.metric_catalog, self._executable_filter, self.session.plugins)
         SettingsPresenter(dialog, self.session)
         self.settings_dialog = dialog
+        self.session.refresh_metric_catalog()
         dialog.settings_changed.connect(lambda: self._preview_dialog(dialog))
         dialog.dialog_window.finished.connect(lambda result: self._finish_settings(dialog, result))
         dialog.dialog_window.open()
@@ -274,6 +324,7 @@ class ShellPresenter(QObject):
             self.comment_window.border_opacity = presentation.border_opacity
             self.comment_window.apply_metrics_settings(_popup_metrics_payload(presentation.popup_metrics))
             self.comment_window.update()
+            self._schedule_metrics_request()
 
     def _save_presentation(self, presentation):
         self.session.apply_presentation(presentation)
@@ -378,6 +429,7 @@ class ShellPresenter(QObject):
         # PiPウィンドウを生成して QListView を渡す
         if self.comment_window is None:
             self.comment_window = CommentWindow(self.config.presentation)
+            self.comment_window.installEventFilter(self)
             self.comment_window.popout_closed.connect(lambda: self.set_comment_popout(False))
             self.comment_window.presentation_changed.connect(self._save_presentation)
         presentation = self.config.presentation
@@ -386,8 +438,6 @@ class ShellPresenter(QObject):
         self.comment_window.border_opacity = presentation.border_opacity
         self.comment_window.apply_metrics_settings(_popup_metrics_payload(presentation.popup_metrics))
         self.comment_window.attach_list_widget(self.comment_list)
-        if self.latest_metrics:
-            self.comment_window.update_metrics(self.latest_metrics)
 
         # 保存済みの位置・サイズがあれば復元
         x = presentation.window_x

@@ -1,3 +1,20 @@
+use std::collections::HashSet;
+
+#[derive(Default)]
+pub struct MetricsRequest(pub Option<HashSet<String>>);
+
+impl MetricsRequest {
+    pub fn wants(&self, id: &str) -> bool {
+        self.0.as_ref().is_none_or(|ids| ids.contains(id))
+    }
+
+    pub fn wants_gpu(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|ids| ids.iter().any(|id| id.starts_with("gpu:")))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GpuMetric {
     pub id: String,

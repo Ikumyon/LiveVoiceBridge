@@ -1,7 +1,5 @@
 """Designer-defined provisioning dialog, driven by an application lifecycle port."""
 
-from pathlib import Path
-
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
@@ -14,15 +12,16 @@ from PySide6.QtWidgets import (
     QRadioButton,
 )
 
-from livevoicebridge.desktop.forms import load_ui_file
 from livevoicebridge.plugins.builtin.qwen3.contracts import QwenRuntime
+
+from .ui_setup import create_form
 
 
 class QwenSetup(QObject):
     def __init__(self, runtime: QwenRuntime, parent, device: str):
         super().__init__(parent)
         self.runtime = runtime
-        self.window = load_ui_file(Path(__file__).with_suffix(".ui"))
+        self.window = create_form()
         self.window.setParent(parent, self.window.windowFlags())
         self.local = self.window.findChild(QRadioButton, "localRadio")
         self.download = self.window.findChild(QRadioButton, "downloadRadio")

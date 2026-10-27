@@ -1,20 +1,16 @@
 from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QWidget
 
 from livevoicebridge.core.telemetry.models import MetricFrame
-from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.monitoring.graph import PerformanceGraphWidget
+from livevoicebridge.desktop.resources.forms.ui_task_manager import create_form
 
 
 class TaskManagerWidget(QWidget):
     """マルチデバイス動的レイアウト型 タスクマネージャーウィジェット"""
 
-    def __init__(self, parent=None, defer_form=False):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        if not defer_form:
-            self.initialize_form()
-
-    def initialize_form(self):
-        self._content = load_form("task_manager", root=self, widgets=(PerformanceGraphWidget,))
+        self._content = create_form(root=self)
         self.graph_group: QGroupBox = self._content.findChild(QGroupBox, "graphGroup")
         self.grid_layout: QGridLayout = self._content.findChild(QGridLayout, "gridLayout")
         self.comment_queue_label: QLabel = self._content.findChild(QLabel, "commentQueueLabel")

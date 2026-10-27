@@ -1,14 +1,12 @@
 """Qwen lifecycle controls owned by the bundled plugin."""
 
-from pathlib import Path
-
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QPlainTextEdit, QPushButton
 
-from livevoicebridge.desktop.forms import load_ui_file
 from livevoicebridge.plugins.contracts import EngineConfig
 
 from .setup import QwenSetup
+from .ui_settings import create_form
 
 
 class QwenPage:
@@ -16,7 +14,7 @@ class QwenPage:
         self.provider = provider
         self._read_config = read_config
         self.runtime = provider.runtime
-        self.widget = load_ui_file(Path(__file__).with_suffix(".ui"))
+        self.widget = create_form()
         self._setup = None
         self._label = self.widget.findChild(QLabel, "stateLabel")
         self._log = self.widget.findChild(QPlainTextEdit, "logText")

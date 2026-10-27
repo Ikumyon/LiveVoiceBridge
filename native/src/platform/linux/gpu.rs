@@ -1,4 +1,4 @@
-use crate::types::GpuMetric;
+use crate::types::{GpuMetric, MetricsRequest};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -20,7 +20,7 @@ fn number(path: PathBuf) -> Option<f32> {
 impl LinuxGpuMetrics {
     pub fn new() -> Self {
         Self {
-            nvml: nvml_wrapper::Nvml::init().ok(),
+            nvml: None,
             devices: Vec::new(),
             last_devices: None,
         }
@@ -96,7 +96,15 @@ impl LinuxGpuMetrics {
         self.devices = devices;
         self.last_devices = Some(Instant::now());
     }
-    pub fn collect(&mut self) -> Vec<GpuMetric> {
+    pub fn catalog(&mut self) -> Vec<(String, String)> {
+        self.enumerate();
+        self.devices
+            .iter()
+            .map(|info| (format!("gpu:{}", info.id), info.name.clone()))
+            .collect()
+    }
+
+    pub fn collect(&mut self, request: &MetricsRequest) -> Vec<GpuMetric> {
         if self
             .last_devices
             .is_none_or(|time| time.elapsed() >= Duration::from_secs(10))
@@ -106,6 +114,7 @@ impl LinuxGpuMetrics {
         let gib = 1024.0_f32.powi(3);
         self.devices
             .iter()
+            .filter(|info| request.wants(&format!("gpu:{}", info.id)))
             .map(|info| {
                 let mut usage = None;
                 let mut used = None;

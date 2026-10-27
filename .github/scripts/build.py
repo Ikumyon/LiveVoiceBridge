@@ -3,31 +3,28 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import sysconfig
 import tarfile
 import tomllib
-import venv
 import zipfile
-from dataclasses import dataclass
 from email.parser import Parser
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from environment import ProjectEnvironment, ensure_dependencies, prepare_environment, run
+from generate_ui import form_sources, generate, generated_module
+
+ROOT = Path(__file__).resolve().parents[2]
 MANIFESTS = (
     ("pyproject.toml", "project"),
     ("native/Cargo.toml", "package"),
     ("services/qwen3/pyproject.toml", "project"),
 )
 TAG_PATTERN = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)(.*)", re.ASCII)
-
-
-def run(args: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
-    subprocess.run(args, cwd=cwd, env=env, check=True)
 
 
 def git(*args: str) -> str:
@@ -83,13 +80,27 @@ def prepare_source(version: str) -> Path:
     return stage
 
 
-def inspect_distribution(stage: Path, distribution: Path, version: str, windows: bool) -> None:
+def inspect_distribution(stage: Path, distribution: Path, version: str, windows: bool, python: str) -> None:
     executable = distribution / ("LiveVoiceBridge.exe" if windows else "LiveVoiceBridge")
     if not executable.is_file() or executable.stat().st_size == 0:
         raise ValueError("Application executable is missing or empty.")
     if not windows and not os.access(executable, os.X_OK):
         raise ValueError("Linux executable permission is missing.")
     internal = distribution / "_internal"
+    archive_check = (
+        "import json, sys; from PyInstaller.archive.readers import CArchiveReader; "
+        "print(json.dumps(list(CArchiveReader(sys.argv[1]).open_embedded_archive('PYZ.pyz').toc)))"
+    )
+    modules = json.loads(subprocess.check_output([python, "-c", archive_check, str(executable)], encoding="utf-8"))
+    for source in form_sources(stage):
+        module = generated_module(stage, source)
+        if module not in modules:
+            raise ValueError(f"Generated form module is missing from the executable: {module}")
+    if any(name.startswith("PySide6.QtUiTools") for name in modules):
+        raise ValueError("QtUiTools must not be bundled.")
+    for path in distribution.rglob("*"):
+        if path.is_file() and (path.suffix.lower() == ".ui" or "uitools" in path.name.lower()):
+            raise ValueError(f"Development UI resource must not be bundled: {path}")
     package = internal / "livevoicebridge"
     extension = "*.pyd" if windows else "*.so"
     if not any(path.stat().st_size for path in package.glob(f"_native{extension}")):
@@ -111,7 +122,7 @@ def inspect_distribution(stage: Path, distribution: Path, version: str, windows:
         source = stage / relative
         destination = internal / Path(relative).relative_to("src")
         for path in source.rglob("*"):
-            if path.is_file() and path.suffix not in {".py", ".pyc"}:
+            if path.is_file() and path.suffix not in {".py", ".pyc", ".ui"}:
                 if path.read_bytes() != (destination / path.relative_to(source)).read_bytes():
                     raise ValueError(f"Bundled resource differs: {path}")
     for path in (stage / "services/qwen3/src").rglob("*.py"):
@@ -119,65 +130,11 @@ def inspect_distribution(stage: Path, distribution: Path, version: str, windows:
             raise ValueError(f"Bundled Qwen source differs: {path}")
 
 
-@dataclass(frozen=True)
-class BuildContext:
-    root: Path
-    python: str
-    env: dict[str, str]
-    windows: bool
-
-
-def build_environment(root: Path, environment: Path, *, fresh: bool = False) -> BuildContext:
-    if (
-        sys.implementation.name != "cpython"
-        or sys.version_info < (3, 14)
-        or sysconfig.get_config_var("Py_GIL_DISABLED")
-    ):
-        raise ValueError("Builds require standard CPython 3.14 or newer.")
-    windows = sys.platform == "win32"
-    scripts = environment / ("Scripts" if windows else "bin")
-    python = str(scripts / ("python.exe" if windows else "python"))
-    if environment.exists():
-        if fresh:
-            raise FileExistsError(f"CI requires a fresh environment: {environment}")
-        if not Path(python).is_file():
-            raise ValueError(f"Incomplete environment; remove or move it before rebuilding: {environment}")
-    else:
-        venv.EnvBuilder(with_pip=True).create(environment)
-    env = dict(os.environ, VIRTUAL_ENV=str(environment), PYO3_PYTHON=python, PYTHONUTF8="1")
-    env["PATH"] = str(scripts) + os.pathsep + env["PATH"]
-    env.pop("PYTHONPATH", None)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    check = (
-        "import sys, sysconfig; "
-        "assert sys.implementation.name == 'cpython' and sys.version_info >= (3, 14) "
-        "and not sysconfig.get_config_var('Py_GIL_DISABLED'), 'Standard CPython 3.14+ required'"
-    )
-    run([python, "-c", check], root, env)
-    return BuildContext(root, python, env, windows)
-
-
-def install_dependencies(context: BuildContext, dependencies: list[str]) -> None:
-    run(
-        [
-            context.python,
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "--upgrade-strategy",
-            "eager",
-            *dependencies,
-        ],
-        context.root,
-        context.env,
-    )
-
-
-def verify_native(context: BuildContext) -> None:
+def verify_native(context: ProjectEnvironment) -> None:
     check = """
 from pathlib import Path
 from importlib.metadata import version
+import sys
 import tomllib
 try:
     from livevoicebridge import _native
@@ -188,30 +145,34 @@ try:
     if version('livevoicebridge') != expected:
         raise ImportError('Installed package metadata does not match the source version')
 except (ImportError, OSError) as exc:
-    raise SystemExit('Run the rust build first: ' + str(exc)) from exc
+    print('Run the rust build first: ' + str(exc), file=sys.stderr)
+    raise SystemExit(2) from exc
 print('Rust extension: ' + str(artifact))
 """
     run([context.python, "-c", check], context.root, context.env)
 
 
-def build_rust(context: BuildContext) -> None:
-    install_dependencies(context, ["maturin"])
+def build_rust(context: ProjectEnvironment) -> None:
+    if shutil.which("cargo", path=context.env["PATH"]) is None:
+        raise FileNotFoundError("Rust/Cargo is required. Install the Rust toolchain before building the extension.")
+    ensure_dependencies(context, "rust", update=True)
     run(["cargo", "update", "--manifest-path", "native/Cargo.toml"], context.root, context.env)
     run([context.python, "-m", "maturin", "develop", "--release", "--locked"], context.root, context.env)
     verify_native(context)
 
 
-def build_python(context: BuildContext) -> Path:
+def build_python(context: ProjectEnvironment) -> Path:
     project = tomllib.loads((context.root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    install_dependencies(context, project["dependencies"] + project["optional-dependencies"]["package"])
+    ensure_dependencies(context, "package", update=True)
     verify_native(context)
+    generate(context.root, context.python, force=True)
     run(
         [context.python, "-m", "PyInstaller", "--clean", "--noconfirm", "packaging/LiveVoiceBridge.spec"],
         context.root,
         context.env,
     )
     distribution = context.root / "dist/LiveVoiceBridge"
-    inspect_distribution(context.root, distribution, project["version"], context.windows)
+    inspect_distribution(context.root, distribution, project["version"], context.windows, context.python)
     print(f"Distribution verified: {distribution}")
     return distribution
 
@@ -232,24 +193,32 @@ def archive_distribution(distribution: Path, windows: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=("ci", "rust", "python"))
+    parser.add_argument("target", choices=("ci", "rust", "python", "check-native"))
     args = parser.parse_args()
     if sys.platform not in {"win32", "linux"}:
         raise ValueError("Only Windows and Linux builds are supported.")
     if args.target == "ci":
         stage = prepare_source(build_version())
-        context = build_environment(stage, ROOT / "build/ci-venv", fresh=True)
+        context = prepare_environment(stage, ROOT / "build/ci-venv", fresh=True)
         build_rust(context)
         distribution = build_python(context)
         if os.environ.get("GITHUB_REF", "").startswith("refs/tags/"):
             archive_distribution(distribution, context.windows)
     else:
-        context = build_environment(ROOT, ROOT / "venv")
-        if args.target == "rust":
+        context = prepare_environment(ROOT, create=args.target != "check-native")
+        if args.target == "check-native":
+            verify_native(context)
+        elif args.target == "rust":
             build_rust(context)
         else:
             build_python(context)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(exc.returncode) from exc
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc

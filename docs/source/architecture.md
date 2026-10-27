@@ -27,7 +27,7 @@ Qwen推論は `services/qwen3/` の独立環境で動く子プロセスです。
 | `host` | 起動、配置、全依存の組み立て |
 | `native` | OS処理、プロセス、再生、DSP、解析、SQLite辞書 |
 | `services/qwen3` | OpenVINOモデルの変換補助・推論HTTPサービス |
-| `tools` / `packaging` | 生成差分、共通ビルド、PyInstaller定義 |
+| `.github/scripts` / `packaging` | 環境準備、UI生成、ビルド・配布検査、PyInstaller定義 |
 
 coreはQtやRustの具象型をimportせず、Protocolと不変の値型で連携します。
 desktopとintegrationsはcoreへ依存し、互いはimportしません。
@@ -114,8 +114,11 @@ SEはRustがファイルから直接デコードします。
 
 ## Qtの構成
 
-固定の画面構造・ウィジェット・レイアウトは `desktop/resources/forms/*.ui` に定義します。
-`desktop/forms.py` がフォームを読み込み、カスタムウィジェットを結び付けます。
+固定の画面構造・ウィジェット・レイアウトは本体と内蔵プラグインの `.ui` に定義します。
+各 `.ui` と同じディレクトリへ生成する `ui_*.py` を、開発時・配布版とも直接importします。
+各生成モジュールの `create_form()` は `desktop/forms.py` の共通ヘルパーでルートを生成・再利用し、
+promoted widgetは生成コードから直接構築します。実行時の `.ui` 読み込みはありません。
+生成手順と開発用起動コマンドは[開発と配布](development.md)を参照してください。
 Pythonで追加するUIはコメント行、辞書行、読み上げブロック、検出GPUなど、
 実行時に個数や構造が変わる部分に限定します。
 

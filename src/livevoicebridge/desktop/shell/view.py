@@ -1,8 +1,8 @@
 from PySide6.QtCore import QEvent, QObject, Signal
 from PySide6.QtWidgets import QApplication
 
-from livevoicebridge.desktop.forms import load_form
 from livevoicebridge.desktop.monitoring.view import TaskManagerWidget
+from livevoicebridge.desktop.resources.forms.ui_main_window import create_form
 
 
 class ShellView(QObject):
@@ -10,7 +10,7 @@ class ShellView(QObject):
 
     def __init__(self):
         super().__init__()
-        self.window = load_form("main_window", widgets=(TaskManagerWidget,))
+        self.window = create_form()
         self.task_manager = self.window.findChild(TaskManagerWidget, "taskManagerWidget")
         if self.task_manager is None:
             raise RuntimeError("タスク表示がUIファイルに定義されていません。")
