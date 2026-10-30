@@ -1,4 +1,4 @@
-"""Build the Linux input plugin against the Qt version bundled by PySide6."""
+"""PySide6同梱Qtと同じ版でLinux用入力プラグインをビルドする。"""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def prepare_fcitx(context: ProjectEnvironment) -> None:
     with TemporaryDirectory(prefix="compile-", dir=work) as temporary:
         directory = Path(temporary)
         sdk = directory / "sdk"
-        # The base desktop SDK includes Qt Wayland client and its private headers.
+        # 基本のdesktop SDKにQt Wayland clientとprivate headersも含まれる。
         run(
             [
                 context.python,
@@ -122,7 +122,7 @@ def prepare_fcitx(context: ProjectEnvironment) -> None:
         plugin = build / "qt6/platforminputcontext" / PLUGIN_NAME
         if not plugin.is_file() or not plugin.stat().st_size:
             raise ValueError("Fcitx build did not produce the input plugin.")
-        # Do not carry the SDK's build-time RUNPATH into the venv or distribution.
+        # SDKを参照するビルド時のRUNPATHをvenvや配布物へ持ち込まない。
         run(["patchelf", "--set-rpath", "$ORIGIN/../../lib", str(plugin)], directory, context.env)
         destination = Path(qt["plugins"]) / "platforminputcontexts"
         if not destination.is_relative_to(context.directory):
@@ -152,7 +152,7 @@ def inspect_fcitx(stage: Path, distribution: Path, python: str) -> None:
     expected = {"version": FCITX_VERSION, "commit": FCITX_COMMIT, "qt": qt_information(python)["version"]}
     if json.loads((licenses / "build.json").read_text(encoding="utf-8")) != expected:
         raise ValueError("Bundled Fcitx build information does not match the selected Qt/source.")
-    # Inspect the loader's full dependency closure, using only the distribution and system libraries.
+    # 配布物とシステムライブラリだけを使い、間接依存も含めてローダーの依存解決を確認する。
     env = dict(os.environ, LC_ALL="C")
     env.pop("LD_PRELOAD", None)
     env["LD_LIBRARY_PATH"] = os.pathsep.join(str(path) for path in (internal / "PySide6/Qt/lib", internal))
