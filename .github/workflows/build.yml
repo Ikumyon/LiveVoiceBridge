@@ -37,9 +37,14 @@ jobs:
         with:
           python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Linux audio build dependencies
+      - name: Linux audio and input plugin build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build extra-cmake-modules pkg-config git binutils patchelf \
+            libasound2-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libgl-dev libegl1-mesa-dev libwayland-dev
       - name: Build and inspect distribution
         run: python .github/scripts/build.py ci
       - uses: actions/upload-artifact@v4
@@ -76,3 +81,19 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             assets/LiveVoiceBridge-Windows-x64.zip \
             assets/LiveVoiceBridge-Linux-x64.tar.gz
+      - name: Verify attached release assets
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import quote
+
+          endpoint = f"repos/{os.environ['GH_REPO']}/releases/tags/{quote(os.environ['RELEASE_TAG'], safe='')}"
+          release = json.loads(subprocess.check_output(["gh", "api", endpoint], encoding="utf-8"))
+          for path in Path("assets").iterdir():
+              matches = [asset for asset in release["assets"] if asset["name"] == path.name]
+              if len(matches) != 1 or matches[0]["state"] != "uploaded" or matches[0]["size"] != path.stat().st_size:
+                  raise SystemExit(f"Release asset verification failed: {path.name}")
+              print(f"Verified release asset: {path.name} ({matches[0]['size']} bytes)")

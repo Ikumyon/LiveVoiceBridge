@@ -13,7 +13,7 @@ dependencies = ["PySide6", "requests", "grpcio>=1.84.1", "protobuf>=7.35.1", "py
 
 [project.optional-dependencies]
 dev = ["ruff", "mypy", "maturin", "grpcio-tools"]
-package = ["pyinstaller"]
+package = ["pyinstaller", "aqtinstall; sys_platform == 'linux'"]
 
 [project.gui-scripts]
 livevoicebridge = "livevoicebridge.host.bootstrap:main"

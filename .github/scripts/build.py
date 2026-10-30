@@ -16,6 +16,7 @@ from email.parser import Parser
 from pathlib import Path
 
 from environment import ProjectEnvironment, ensure_dependencies, prepare_environment, run
+from fcitx import inspect_fcitx, prepare_fcitx
 from generate_ui import form_sources, generate, generated_module
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -87,6 +88,8 @@ def inspect_distribution(stage: Path, distribution: Path, version: str, windows:
     if not windows and not os.access(executable, os.X_OK):
         raise ValueError("Linux executable permission is missing.")
     internal = distribution / "_internal"
+    if not windows:
+        inspect_fcitx(stage, distribution, python)
     archive_check = (
         "import json, sys; from PyInstaller.archive.readers import CArchiveReader; "
         "print(json.dumps(list(CArchiveReader(sys.argv[1]).open_embedded_archive('PYZ.pyz').toc)))"
@@ -166,6 +169,8 @@ def build_python(context: ProjectEnvironment) -> Path:
     ensure_dependencies(context, "package", update=True)
     verify_native(context)
     generate(context.root, context.python, force=True)
+    if not context.windows:
+        prepare_fcitx(context)
     run(
         [context.python, "-m", "PyInstaller", "--clean", "--noconfirm", "packaging/LiveVoiceBridge.spec"],
         context.root,
@@ -220,7 +225,7 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as exc:
         raise SystemExit(exc.returncode) from exc
     except subprocess.TimeoutExpired as exc:
-        print(f"Designer compiler command timed out after {exc.timeout}s: {exc.cmd}", file=sys.stderr)
+        print(f"Build command timed out after {exc.timeout}s: {exc.cmd}", file=sys.stderr)
         raise SystemExit(1) from exc
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)

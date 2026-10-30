@@ -199,6 +199,43 @@ venvも `build/ci-venv/` に新規作成し、Rust→Python→検査の順で実
 
 ## GitHub ActionsとRelease
 
+### Linux配布版のFcitx入力プラグイン
+
+Linux x64の配布ビルドは、CI・ローカルとも共通ビルド処理で `fcitx5-qt` を生成します。
+ソースからの開発起動では自動導入しません。
+ローカルで配布ビルドする場合も、次の開発用依存が必要です（Debian/Ubuntu）。
+
+```bash
+sudo apt-get install -y \
+  build-essential cmake ninja-build extra-cmake-modules pkg-config git binutils patchelf \
+  libasound2-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+  libgl-dev libegl1-mesa-dev libwayland-dev
+```
+
+Pythonの配布用依存にはLinux限定で `aqtinstall` を含めます。
+依存更新後のPySide6から実際のQtバージョンを取得し、同じ版のQt desktop SDKを取得します。
+SDKに含まれるQt Wayland clientとprivate headersも使用します。
+SDK・ソース・コンパイル用ファイルは `build/fcitx5/` 配下の一時ディレクトリで扱い、
+毎回ビルドして処理終了時に削除します。初回以外もSDKのダウンロードが必要です。
+同じ版のSDKが取得できない場合や、CMakeがSDK外のQtを選択した場合は失敗します。
+
+`fcitx5-qt` は5.1.16、コミット `115750044f3d0db16ca5859808c7da830fd1ff52` に固定します。
+Qt 6・X11・Wayland対応の動的プラグインのみをRelease構成で生成します。
+Qtの内部APIを使用するため、PySide6のQtが更新された場合も同じ版のSDKで再ビルドします。
+SDKのQtライブラリ本体は配布せず、PySide6が同梱するQtを使用します。
+
+生成物をビルド用venvの `platforminputcontexts/` に配置し、PyInstallerの標準フックで収集します。
+配布先は `_internal/PySide6/Qt/plugins/platforminputcontexts/libfcitx5platforminputcontextplugin.so`、
+ライセンスとソースコミット・Qtバージョンの記録は `_internal/licenses/fcitx5-qt/` です。
+同梱検査はプラグインとライセンスの存在、版の一致、`ldd` による依存解決、
+Qt依存が配布物内を参照すること、`readelf` によるSDKへの絶対パス残存を確認します。
+アプリ起動や日本語入力の検証は行いません。
+
+実行環境にはOS側でFcitx本体とMozcなどの日本語入力エンジンが必要です。
+本体は `QT_IM_MODULE` などを上書きせず、利用環境のFcitx・IBus・Waylandの選択に従います。
+
+### ワークフローと公開
+
 `.github/workflows/build.yml` のトリガーはPR、mainへのpush、Releaseのpublishedです。
 タグのpushだけやRelease下書き保存では配布ワークフローを開始しません。
 Release公開は正式版・プレリリースとも対象です。
@@ -214,6 +251,7 @@ PR・main更新では圧縮と成果物保存を行いません。
 2. Actionsが静的検査と両OSのビルド・検査を実施します。
 3. Release用の配布ファイルを圧縮してActionsの成果物に保存します。
 4. 両OSが成功した後、添付ジョブが公開済みReleaseのAssetsへ両ファイルを自動添付します。
+5. GitHub APIで両Assetsのアップロード完了と、添付元ファイルとのサイズ一致を確認します。
 
 | OS | Assetsのファイル名 |
 | --- | --- |

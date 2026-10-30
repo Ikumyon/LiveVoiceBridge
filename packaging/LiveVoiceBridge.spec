@@ -6,6 +6,9 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 root = Path(SPECPATH).parent
+linux_data = []
+if sys.platform == "linux":
+    linux_data.append((str(root / "build/fcitx5/licenses"), "licenses/fcitx5-qt"))
 if sys.platform == "win32":
     # Resolve system DLLs from Windows, not unrelated development tools on PATH.
     windows = Path(os.environ["SystemRoot"])
@@ -23,7 +26,7 @@ a = Analysis(
     pathex=[str(root / "src")],
     binaries=[],
     datas=copy_metadata("livevoicebridge") + collect_data_files("livevoicebridge", excludes=["**/*.ui"])
-    + collect_data_files("pykakasi") + [
+    + collect_data_files("pykakasi") + linux_data + [
         (str(root / "services/qwen3/pyproject.toml"), "livevoicebridge/integrations/qwen/resources/service"),
         (str(root / "services/qwen3/src/lvb_qwen3_service"),
          "livevoicebridge/integrations/qwen/resources/service/src/lvb_qwen3_service"),
